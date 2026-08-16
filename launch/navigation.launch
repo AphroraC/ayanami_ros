@@ -1,0 +1,7 @@
+<launch>
+  <arg name="rviz" default="true"/>
+  <node name="ayanami_ros" pkg="ayanami_ros" type="ayanami_rosnode" output="screen"/>
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find ayanami_ros)/launch/config.rviz"/>
+  </group>
+</launch>
