@@ -12,6 +12,8 @@
 #include <ayanami/interfaces/transform_store.hpp>
 #include <ayanami/utility/load_module.hpp>
 
+#include <ayanami_ros/ros_msg_converter.hpp>
+
 #include <spdlog/spdlog.h>
 
 namespace ayanami_ros {
@@ -87,13 +89,6 @@ std::vector<std::pair<std::string, std::string>> readTfSyncEdges(
              {map_frame, robot_frame}};
   }
   return edges;
-}
-
-ayanami::geometry_msgs::Header fromRosHeader(const std_msgs::Header& h) {
-  ayanami::geometry_msgs::Header out;
-  out.seq = h.seq;
-  out.frame_id = h.frame_id;
-  return out;
 }
 
 // 解析 config_path (member init list 用, 懒求值): param → env → package。
@@ -237,16 +232,7 @@ void AyanamiROS::subscribeTopics() {
 void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
   spdlog::info("navigation goal received frame={} x={:.3f} y={:.3f}",
                msg->header.frame_id, msg->pose.position.x, msg->pose.position.y);
-  ayanami::geometry_msgs::PoseStamped goal;
-  goal.header = fromRosHeader(msg->header);
-  goal.pose.translation() =
-      Eigen::Vector3d(msg->pose.position.x, msg->pose.position.y,
-                      msg->pose.position.z);
-  goal.pose.linear() =
-      Eigen::Quaterniond(msg->pose.orientation.w, msg->pose.orientation.x,
-                         msg->pose.orientation.y, msg->pose.orientation.z)
-          .normalized()
-          .toRotationMatrix();
+  const ayanami::geometry_msgs::PoseStamped goal = fromRosPose(*msg);
   {
     std::lock_guard<std::mutex> lock(goal_mutex_);
     if (navigation_plugin_) {
@@ -257,54 +243,23 @@ void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
 
 void AyanamiROS::pointcloudCallback(
     const sensor_msgs::PointCloud2::ConstPtr& msg) {
-  // Task 8 ros_msg_converter 实接前的占位转换 (spec §4.3)。
-  ayanami::sensor_msgs::PointCloud2 cloud;
-  cloud.header = fromRosHeader(msg->header);
-  cloud.height = msg->height;
-  cloud.width = msg->width;
-  cloud.fields.reserve(msg->fields.size());
-  for (const auto& f : msg->fields) {
-    ayanami::sensor_msgs::PointField pf;
-    pf.name = f.name;
-    pf.offset = f.offset;
-    pf.datatype = f.datatype;
-    pf.count = f.count;
-    cloud.fields.push_back(pf);
-  }
-  cloud.is_bigendian = msg->is_bigendian;
-  cloud.point_step = msg->point_step;
-  cloud.row_step = msg->row_step;
-  cloud.is_dense = msg->is_dense;
-  cloud.data.assign(msg->data.begin(), msg->data.end());
+  // Task 8: ros_msg_converter 统一转换 (spec §4.3)。
+  const ayanami::sensor_msgs::PointCloud2 cloud = fromRosPointCloud2(*msg);
   ayanami::interfaces::NavigationCallbacks::on_obstacle_pointcloud(cloud);
 }
 
 void AyanamiROS::laserscanCallback(
     const sensor_msgs::LaserScan::ConstPtr& msg) {
-  ayanami::sensor_msgs::LaserScan scan;
-  scan.header = fromRosHeader(msg->header);
-  scan.angle_min = msg->angle_min;
-  scan.angle_max = msg->angle_max;
-  scan.angle_increment = msg->angle_increment;
-  scan.time_increment = msg->time_increment;
-  scan.scan_time = msg->scan_time;
-  scan.range_min = msg->range_min;
-  scan.range_max = msg->range_max;
-  scan.ranges.assign(msg->ranges.begin(), msg->ranges.end());
-  scan.intensities.assign(msg->intensities.begin(), msg->intensities.end());
+  const ayanami::sensor_msgs::LaserScan scan = fromRosLaserScan(*msg);
   ayanami::interfaces::NavigationCallbacks::on_obstacle_laserscan(scan);
 }
 
 void AyanamiROS::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
-  ayanami::geometry_msgs::TwistStamped twist;
-  twist.header = fromRosHeader(msg->header);
-  twist.header.frame_id = msg->child_frame_id;
-  twist.twist.linear = Eigen::Vector3d(msg->twist.twist.linear.x,
-                                       msg->twist.twist.linear.y,
-                                       msg->twist.twist.linear.z);
-  twist.twist.angular = Eigen::Vector3d(msg->twist.twist.angular.x,
-                                        msg->twist.twist.angular.y,
-                                        msg->twist.twist.angular.z);
+  geometry_msgs::TwistStamped ros_twist;
+  ros_twist.header = msg->header;
+  ros_twist.header.frame_id = msg->child_frame_id;
+  ros_twist.twist = msg->twist.twist;
+  const ayanami::geometry_msgs::TwistStamped twist = fromRosTwist(ros_twist);
   {
     std::lock_guard<std::mutex> lock(odom_mutex_);
     last_odom_ = twist;

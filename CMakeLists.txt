@@ -77,4 +77,10 @@ if(CATKIN_ENABLE_TESTING)
   if(TARGET tf2_listener_test)
     target_link_libraries(tf2_listener_test ayanami_ros)
   endif()
+
+  # Task 8: ros_msg_converter (Eigen ↔ ROS msgs) 纯头文件 inline 实现。
+  catkin_add_gtest(ros_msg_converter_test tests/ros_msg_converter_test.cpp)
+  if(TARGET ros_msg_converter_test)
+    target_link_libraries(ros_msg_converter_test ayanami_ros)
+  endif()
 endif()
