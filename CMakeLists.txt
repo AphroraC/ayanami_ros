@@ -42,3 +42,19 @@ install(TARGETS ayanami_ros ayanami_rosnode
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY include/ DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
+
+if(CATKIN_ENABLE_TESTING)
+  find_package(GTest REQUIRED)
+
+  # stub extension .so 用于 dlopen 测试 (Task 5; 真订阅留给 rviz_viewer T9)
+  add_library(_extension_template SHARED src/ayanami_ros/extensions/_extension_template.cpp)
+  target_link_libraries(_extension_template PRIVATE ayanami_ros)
+  set_target_properties(_extension_template PROPERTIES PREFIX "lib")
+
+  catkin_add_gtest(extension_module_ros_test tests/extension_module_ros_test.cpp)
+  if(TARGET extension_module_ros_test)
+    target_link_libraries(extension_module_ros_test ayanami_ros)
+    target_compile_definitions(extension_module_ros_test PRIVATE
+      STUB_EXTENSION_SO="$<TARGET_FILE:_extension_template>")
+  endif()
+endif()
