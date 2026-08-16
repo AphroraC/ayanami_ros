@@ -98,4 +98,18 @@ if(CATKIN_ENABLE_TESTING)
     target_compile_definitions(rviz_viewer_test PRIVATE
       RVIZ_VIEWER_SO="$<TARGET_FILE:rviz_viewer>")
   endif()
+
+  # Task 10: config_ros.json + costmap.json + costmap_navigation.json
+  # (Gazebo nav_demo 对齐) 内容一致性验证 (spec §8.1-§8.3)。
+  # 用源树真实 config/assets 目录 + nav_demo 地图目录做兼容性检查。
+  catkin_add_gtest(config_spec_verify_test tests/config_spec_verify_test.cpp)
+  if(TARGET config_spec_verify_test)
+    target_link_libraries(config_spec_verify_test ayanami_ros)
+    target_include_directories(config_spec_verify_test PRIVATE
+      ${PROJECT_SOURCE_DIR}/../ayanami/packages/costmap_2d/include)
+    target_compile_definitions(config_spec_verify_test PRIVATE
+      AYANAMI_TEST_CONFIG_DIR="${PROJECT_SOURCE_DIR}/../ayanami/config"
+      AYANAMI_TEST_ASSETS_DIR="${PROJECT_SOURCE_DIR}/../ayanami/assets"
+      NAV_DEMO_MAP_DIR="${PROJECT_SOURCE_DIR}/../node/nav_demo/map")
+  endif()
 endif()
