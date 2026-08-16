@@ -45,7 +45,14 @@ target_link_libraries(ayanami_ros PUBLIC
 add_executable(ayanami_rosnode apps/ayanami_rosnode.cpp)
 target_link_libraries(ayanami_rosnode ayanami_ros)
 
-install(TARGETS ayanami_ros ayanami_rosnode
+# Task 9: rviz_viewer ROS extension .so (spec §4.5 核心->ROS)。导出
+# create_extension_module 工厂符号供 AyanamiROS dlopen; config_ros.json::extension_modules
+# 以 "librviz_viewer.so" 裸名引用 (T10 写)。
+add_library(rviz_viewer SHARED src/ayanami_ros/extensions/rviz_viewer.cpp)
+target_link_libraries(rviz_viewer PRIVATE ayanami_ros ayanami::ayanami)
+set_target_properties(rviz_viewer PROPERTIES PREFIX "lib")
+
+install(TARGETS ayanami_ros ayanami_rosnode rviz_viewer
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY include/ DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
@@ -82,5 +89,13 @@ if(CATKIN_ENABLE_TESTING)
   catkin_add_gtest(ros_msg_converter_test tests/ros_msg_converter_test.cpp)
   if(TARGET ros_msg_converter_test)
     target_link_libraries(ros_msg_converter_test ayanami_ros)
+  endif()
+
+  # Task 9: rviz_viewer ROS extension .so (dlopen + create_subscriptions 链)。
+  catkin_add_gtest(rviz_viewer_test tests/rviz_viewer_test.cpp)
+  if(TARGET rviz_viewer_test)
+    target_link_libraries(rviz_viewer_test ayanami_ros ${CMAKE_DL_LIBS})
+    target_compile_definitions(rviz_viewer_test PRIVATE
+      RVIZ_VIEWER_SO="$<TARGET_FILE:rviz_viewer>")
   endif()
 endif()
