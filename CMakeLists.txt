@@ -17,6 +17,11 @@ find_package(spdlog REQUIRED)
 
 include_directories(include ${catkin_INCLUDE_DIRS})
 
+# 用 ayanami vendored nlohmann (3.11.3): 系统 3.7.3 与本 toolchain (GCC10)
+# 不兼容 (thirdparty.cmake 注)。ayanami 未将 vendored 头导出给下游, 此处指向
+# 同一 workspace 内 ayanami 源码树 thirdparty。
+include_directories(${PROJECT_SOURCE_DIR}/../ayanami/thirdparty)
+
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ayanami_ros
@@ -55,6 +60,13 @@ if(CATKIN_ENABLE_TESTING)
   if(TARGET extension_module_ros_test)
     target_link_libraries(extension_module_ros_test ayanami_ros)
     target_compile_definitions(extension_module_ros_test PRIVATE
+      STUB_EXTENSION_SO="$<TARGET_FILE:_extension_template>")
+  endif()
+
+  catkin_add_gtest(ayanami_ros_load_test tests/ayanami_ros_load_test.cpp)
+  if(TARGET ayanami_ros_load_test)
+    target_link_libraries(ayanami_ros_load_test ayanami_ros ${CMAKE_DL_LIBS})
+    target_compile_definitions(ayanami_ros_load_test PRIVATE
       STUB_EXTENSION_SO="$<TARGET_FILE:_extension_template>")
   endif()
 endif()
