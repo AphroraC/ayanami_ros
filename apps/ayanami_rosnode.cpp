@@ -5,7 +5,10 @@ int main(int argc, char** argv) {
   ros::NodeHandle nh("~");
   ayanami_ros::AyanamiROS node(nh);
   node.start();
-  ros::spin();
+  ros::AsyncSpinner spinner(2);
+  spinner.start();
+  ros::waitForShutdown();
+  spinner.stop();
   node.stop();
   return 0;
 }

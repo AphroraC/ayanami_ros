@@ -3,7 +3,7 @@
 #include <ayanami/interfaces/callbacks.hpp>
 #include <ayanami/utility/config.hpp>
 #include <ros/ros.h>
-#include <geometry_msgs/TwistStamped.h>
+#include <geometry_msgs/Twist.h>
 #include <nav_msgs/Path.h>
 #include <nav_msgs/OccupancyGrid.h>
 
@@ -79,8 +79,7 @@ private:
         nh_.advertise<nav_msgs::Path>(planner_path_topic_, 1, true);
     smoother_path_pub_ =
         nh_.advertise<nav_msgs::Path>(smoother_path_topic_, 1, true);
-    velocity_pub_ =
-        nh_.advertise<geometry_msgs::TwistStamped>(velocity_topic_, 1);
+    velocity_pub_ = nh_.advertise<geometry_msgs::Twist>(velocity_topic_, 1);
     static_map_pub_ =
         nh_.advertise<nav_msgs::OccupancyGrid>(static_map_topic_, 1, true);
     global_costmap_pub_ =
@@ -165,7 +164,16 @@ private:
   void publishVelocityCommand(
       const ayanami::geometry_msgs::TwistStamped& velocity) {
     g_velocity_pub_count.fetch_add(1);
-    velocity_pub_.publish(toRosTwist(velocity));
+    // Task 12 stage C: gazebo_ros_diff_drive (noetic 2.9.3) 只订阅
+    // geometry_msgs/Twist (无 TwistStamped/legacyMode), 故 /cmd_vel 发 Twist。
+    geometry_msgs::Twist twist;
+    twist.linear.x = velocity.twist.linear.x();
+    twist.linear.y = velocity.twist.linear.y();
+    twist.linear.z = velocity.twist.linear.z();
+    twist.angular.x = velocity.twist.angular.x();
+    twist.angular.y = velocity.twist.angular.y();
+    twist.angular.z = velocity.twist.angular.z();
+    velocity_pub_.publish(twist);
   }
 
   void publishCostmap(const std::string& name,

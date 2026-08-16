@@ -160,13 +160,14 @@ Visualization Manager:
       Topic: /move_base_simple/goal
       Unreliable: false
       Value: true
-    # Cmd Vel: ayanami_ros 经 velocity_pub_ 发 geometry_msgs/TwistStamped 于 /cmd_vel
-    # (config_ros.json::cmd_vel_topic), 用原生 rviz/TwistStamped display 显示速度箭头。
+    # Cmd Vel: ayanami_ros 经 velocity_pub_ 发 geometry_msgs/Twist 于 /cmd_vel
+    # (config_ros.json::cmd_vel_topic; gazebo_ros_diff_drive noetic 只吃 Twist),
+    # 用原生 rviz/Twist display 显示速度箭头。
     - Alpha: 1
       Angular Arrow Scale: 2
       Angular Color: 204; 204; 51
       Arrow Width: 0.5
-      Class: rviz/TwistStamped
+      Class: rviz/Twist
       Enabled: true
       Hide Small Values: true
       History Length: 1

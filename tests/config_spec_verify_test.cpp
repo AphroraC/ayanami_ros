@@ -6,7 +6,8 @@
 //      (laserscan=/scan, odom=/odom, goal=/move_base_simple/goal,
 //      map/odom/base_footprint, tf_sync_rate 50)。
 //   2. extension_modules 含 "librviz_viewer.so"。
-//   3. costmap.json: global rolling=false, local rolling=true,
+//   3. costmap.json: global rolling=true (M2 Ruling #M2-4: nav_demo 99m 大地图
+//      滚动跟随, 见 Task 12 stage C), local rolling=true,
 //      observation_sources 用 LaserScan (含 scan), obstacle_range/raytrace_range,
 //      inscribed_radius 0.3 (车体), inflation_radius 0.3+safety margin。
 //   4. costmap_navigation.json: robot_frame=base_footprint 与 config_ros 一致;
@@ -119,8 +120,9 @@ TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
   ayanami::Config cfg(
       ayanami::GlobalConfig::get_config_path("config_costmap"));
 
-  // global 全图固定 / local rolling (spec §8.3)。
-  EXPECT_FALSE(cfg.param<bool>("costmap_global", "rolling_window", true));
+  // M2 Ruling #M2-4: global 滚动跟随 (nav_demo 99m 大地图) / local rolling
+  // (spec §8.3 原 global 全图固定, Task 12 stage C carry 修订)。
+  EXPECT_TRUE(cfg.param<bool>("costmap_global", "rolling_window", true));
   EXPECT_TRUE(cfg.param<bool>("costmap_local", "rolling_window", false));
 
   // 车体 0.3 (inscribed) + inflation safety margin。
