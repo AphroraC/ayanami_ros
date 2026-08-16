@@ -51,6 +51,9 @@ Visualization Manager:
       Plane Cell Count: 10
       Reference Frame: <Fixed Frame>
       Value: true
+    # Static Map: ayanami_ros (rviz_viewer, T9) 不 publish static_map (仅 advertise
+    # /ayanami/map, latched, 不真发布)。M9 stage C 端到端由 nav_demo/map_server.launch
+    # 发布 /map, 故此处订阅 /map (nav_demo map_server)。
     - Alpha: 0.699999988079071
       Class: rviz/Map
       Color Scheme: map
@@ -139,6 +142,38 @@ Visualization Manager:
       Queue Size: 10
       Shape: Arrow
       Topic: /odom
+      Unreliable: false
+      Value: true
+    # Goal: 2D Nav Goal tool 发布 /move_base_simple/goal (PoseStamped), 用原生
+    # rviz/Pose display 显示目标位姿 (绿色箭头)。
+    - Alpha: 1
+      Class: rviz/Pose
+      Color: 25; 255; 0
+      Enabled: true
+      Head Length: 0.30000001192092896
+      Head Radius: 0.10000000149011612
+      Name: Goal
+      Queue Size: 10
+      Shaft Length: 1
+      Shaft Radius: 0.05000000074505806
+      Shape: Arrow
+      Topic: /move_base_simple/goal
+      Unreliable: false
+      Value: true
+    # Cmd Vel: ayanami_ros 经 velocity_pub_ 发 geometry_msgs/TwistStamped 于 /cmd_vel
+    # (config_ros.json::cmd_vel_topic), 用原生 rviz/TwistStamped display 显示速度箭头。
+    - Alpha: 1
+      Angular Arrow Scale: 2
+      Angular Color: 204; 204; 51
+      Arrow Width: 0.5
+      Class: rviz/TwistStamped
+      Enabled: true
+      Hide Small Values: true
+      History Length: 1
+      Linear Arrow Scale: 2
+      Linear Color: 204; 51; 51
+      Name: Cmd Vel
+      Topic: /cmd_vel
       Unreliable: false
       Value: true
     - Class: rviz/TF
