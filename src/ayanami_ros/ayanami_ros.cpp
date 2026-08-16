@@ -9,6 +9,7 @@
 #include <ros/package.h>
 
 #include <ayanami/interfaces/callbacks.hpp>
+#include <ayanami/interfaces/transform_store.hpp>
 #include <ayanami/utility/load_module.hpp>
 
 #include <spdlog/spdlog.h>
@@ -42,6 +43,52 @@ std::vector<std::string> readExtensionModules(const std::string& path) {
   }
 }
 
+// M1 Config 未实例化 vector<string> 的嵌套 pair 序列, 直接 nlohmann 读
+// config_ros.json::ayanami_ros::tf_sync_edges 列表 [[target, source], ...]
+// (spec §7, §4.4)。缺失时用配置 frame 回退默认三条边。
+std::vector<std::pair<std::string, std::string>> readTfSyncEdges(
+    const std::string& path) {
+  std::vector<std::pair<std::string, std::string>> edges;
+  std::string map_frame = "map", odom_frame = "odom", robot_frame = "base_link";
+  try {
+    std::ifstream ifs(path);
+    if (ifs) {
+      const nlohmann::json doc = nlohmann::json::parse(ifs, nullptr, false);
+      const auto ros_it = doc.find("ayanami_ros");
+      if (ros_it != doc.end() && ros_it->is_object()) {
+        auto read_str = [&ros_it](const char* key, const std::string& def) {
+          const auto it = ros_it->find(key);
+          return (it != ros_it->end() && it->is_string())
+                     ? it->get<std::string>()
+                     : def;
+        };
+        map_frame = read_str("map_frame", map_frame);
+        odom_frame = read_str("odom_frame", odom_frame);
+        robot_frame = read_str("robot_frame", robot_frame);
+        const auto it = ros_it->find("tf_sync_edges");
+        if (it != ros_it->end() && it->is_array()) {
+          for (const auto& e : *it) {
+            if (e.is_array() && e.size() == 2 && e[0].is_string() &&
+                e[1].is_string()) {
+              edges.emplace_back(e[0].get<std::string>(),
+                                 e[1].get<std::string>());
+            }
+          }
+        }
+      }
+    }
+  } catch (const nlohmann::json::exception& e) {
+    spdlog::error("readTfSyncEdges({}): {}", path, e.what());
+  }
+  if (edges.empty()) {
+    // spec §4.4 默认: map→odom, odom→base_link, map→base_link。
+    edges = {{map_frame, odom_frame},
+             {odom_frame, robot_frame},
+             {map_frame, robot_frame}};
+  }
+  return edges;
+}
+
 ayanami::geometry_msgs::Header fromRosHeader(const std_msgs::Header& h) {
   ayanami::geometry_msgs::Header out;
   out.seq = h.seq;
@@ -49,20 +96,28 @@ ayanami::geometry_msgs::Header fromRosHeader(const std_msgs::Header& h) {
   return out;
 }
 
+// 解析 config_path (member init list 用, 懒求值): param → env → package。
+std::string resolveConfigPath(const ros::NodeHandle& nh) {
+  std::string path;
+  nh.param<std::string>("config_path", path, "");
+  if (path.empty()) {
+    const char* env = std::getenv("AYANAMI_CONFIG_PATH");
+    path = env ? env : (ros::package::getPath("ayanami") + "/config");
+  }
+  return path;
+}
+
 }  // namespace
 
 AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
     : nh_(nh),
+      config_path_(resolveConfigPath(nh)),
+      tf_listener_(nh, readTfSyncEdges(config_path_ + "/config_ros.json")),
       navigation_so_name_("libayanami_costmap_navigation.so"),
       navigation_create_symbol_("create_navigation_module") {
   // spec §4.2 verbatim 顺序。
   // 注意: 默认值里 ros::package::getPath() 只有在 param 缺失时才求值 (避免
   // 无 roscore 测试环境触发 rospack 的 tinyxml2 符号冲突 / roscore 依赖)。
-  nh_.param<std::string>("config_path", config_path_, "");
-  if (config_path_.empty()) {
-    const char* env = std::getenv("AYANAMI_CONFIG_PATH");
-    config_path_ = env ? env : (ros::package::getPath("ayanami") + "/config");
-  }
   ayanami::GlobalConfig::instance(config_path_, /*override_path=*/true);
   ayanami::Config config_ros(
       ayanami::GlobalConfig::get_config_path("config_ros"));
@@ -257,8 +312,23 @@ void AyanamiROS::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
 }
 
 void AyanamiROS::syncTransformsToCore() {
-  // Task 7 实接 TF2Listener::lookup_transform 前的占位 (T4 stub)。
-  // 本 task 保持 no-op, 不查真实 TF。
+  // Task 7: 真实 TF2Listener 接入 (spec §4.4)。
+  // 对 tf_sync_edges_ 每条边 lookup_transform(target, source, ros::Time(0))
+  // → Eigen::Isometry3d → TransformStore::setTransform (stamp 用当前时间,
+  // 替代 M1 默认 0s; lookup 用 Time(0) 即 latest)。
+  ayanami::interfaces::TransformStore& store =
+      ayanami::interfaces::TransformStore::instance();
+  const double now = ros::Time::now().toSec();
+  for (const auto& edge : tf_listener_.tfSyncEdges()) {
+    const std::string& target = edge.first;
+    const std::string& source = edge.second;
+    Eigen::Isometry3d T;
+    if (tf_listener_.lookup_transform(target, source, ros::Time(0), T)) {
+      store.setTransform(
+          target, source,
+          ayanami::interfaces::TransformStore::fromSeconds(now), T);
+    }
+  }
 }
 
 void AyanamiROS::loop() {

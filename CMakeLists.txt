@@ -19,8 +19,10 @@ include_directories(include ${catkin_INCLUDE_DIRS})
 
 # 用 ayanami vendored nlohmann (3.11.3): 系统 3.7.3 与本 toolchain (GCC10)
 # 不兼容 (thirdparty.cmake 注)。ayanami 未将 vendored 头导出给下游, 此处指向
-# 同一 workspace 内 ayanami 源码树 thirdparty。
+# 同一 workspace 内 ayanami 源码树 thirdparty。fast_tf 同 (header-only,
+# TransformStore 头 include <fast_tf.hpp>)。
 include_directories(${PROJECT_SOURCE_DIR}/../ayanami/thirdparty)
+include_directories(${PROJECT_SOURCE_DIR}/../ayanami/thirdparty/fast_tf)
 
 catkin_package(
   INCLUDE_DIRS include
@@ -68,5 +70,11 @@ if(CATKIN_ENABLE_TESTING)
     target_link_libraries(ayanami_ros_load_test ayanami_ros ${CMAKE_DL_LIBS})
     target_compile_definitions(ayanami_ros_load_test PRIVATE
       STUB_EXTENSION_SO="$<TARGET_FILE:_extension_template>")
+  endif()
+
+  # Task 7: TF2Listener (tf2_ros Buffer + TransformListener + lookup_transform)。
+  catkin_add_gtest(tf2_listener_test tests/tf2_listener_test.cpp)
+  if(TARGET tf2_listener_test)
+    target_link_libraries(tf2_listener_test ayanami_ros)
   endif()
 endif()
