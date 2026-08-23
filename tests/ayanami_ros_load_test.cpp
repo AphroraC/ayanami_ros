@@ -68,33 +68,36 @@ std::filesystem::path make_config_dir() {
 
   write_file(dir / "config.json",
              "{\n  \"global\": {\n"
-             "    \"config_navigation\": \"costmap_navigation.json\",\n"
-             "    \"config_costmap\": \"costmap.json\",\n"
-             "    \"config_planner\": \"costmap_smac_planner.json\",\n"
-             "    \"config_smoother\": \"costmap_savitzky_smoother.json\",\n"
-             "    \"config_controller\": \"costmap_pid_controller.json\",\n"
-             "    \"config_recovery\": [\"costmap_clear_costmap_recovery.json\"]\n"
+             "    \"config_navigation\": \"costmap_navigation.json\"\n"
              "  }\n}\n");
 
-  write_file(dir / "costmap_navigation.json",
-             "{\n  \"navigation\": {\n"
-             "    \"behavior_tree_xml\": \"BT/navigation.xml\",\n"
-             "    \"behavior_tree_id\": \"NavigateWithReplanningAndSmoothing\",\n"
-             "    \"planner_id\": \"costmap_smac\",\n"
-             "    \"smoother_id\": \"costmap_savitzky\",\n"
-             "    \"controller_id\": \"costmap_pid\",\n"
-             "    \"recovery_id\": \"clear_recovery\",\n"
-             "    \"clear_costmap_id\": \"clear_recovery\",\n"
-             "    \"spin_id\": \"clear_recovery\",\n"
-             "    \"wait_id\": \"clear_recovery\",\n"
-             "    \"backup_id\": \"clear_recovery\",\n"
-             "    \"planner_frequency\": 100.0,\n"
-             "    \"smoother_frequency\": -1.0,\n"
-             "    \"controller_frequency\": 20.0,\n"
-             "    \"tick_frequency\": 100.0,\n"
-             "    \"robot_frame\": \"base_footprint\",\n"
-             "    \"costmap_visualization_rate\": 100.0\n"
-             "  }\n}\n");
+  {
+    std::ofstream nav(dir / "costmap_navigation.json");
+    nav << "{\n  \"navigation\": {\n"
+        << "    \"behavior_tree_xml\": \"BT/navigation.xml\",\n"
+        << "    \"behavior_tree_id\": \"NavigateWithReplanningAndSmoothing\",\n"
+        << "    \"planner_id\": \"costmap_smac\",\n"
+        << "    \"smoother_id\": \"costmap_savitzky\",\n"
+        << "    \"controller_id\": \"costmap_pid\",\n"
+        << "    \"recovery_id\": \"clear_recovery\",\n"
+        << "    \"clear_costmap_id\": \"clear_recovery\",\n"
+        << "    \"spin_id\": \"clear_recovery\",\n"
+        << "    \"wait_id\": \"clear_recovery\",\n"
+        << "    \"backup_id\": \"clear_recovery\",\n"
+        << "    \"planner_frequency\": 100.0,\n"
+        << "    \"smoother_frequency\": -1.0,\n"
+        << "    \"controller_frequency\": 20.0,\n"
+        << "    \"tick_frequency\": 100.0,\n"
+        << "    \"robot_frame\": \"base_footprint\",\n"
+        << "    \"costmap_visualization_rate\": 100.0\n"
+        << "  },\n"
+        << "  \"modules\": {\n"
+        << "    \"config_planner\": \"costmap_smac_planner.json\",\n"
+        << "    \"config_smoother\": \"costmap_savitzky_smoother.json\",\n"
+        << "    \"config_controller\": \"costmap_pid_controller.json\",\n"
+        << "    \"config_recovery\": [\"costmap_clear_costmap_recovery.json\"]\n"
+        << "  }\n";
+  }
 
   write_file(dir / "costmap_smac_planner.json",
              "{\n  " +
@@ -131,31 +134,33 @@ std::filesystem::path make_config_dir() {
              "    \"clear_radius\": 1.0,\n    \"affected_maps\": \"both\"\n"
              "  }\n}\n");
 
-  write_file(dir / "costmap.json",
-             "{\n  \"costmap\": {\n"
-             "    \"global_frame\": \"map\",\n"
-             "    \"local_frame\": \"odom\",\n"
-             "    \"resolution\": 0.5\n"
-             "  },\n"
-             "  \"costmap_global\": {\n"
-             "    \"size_x\": 20,\n    \"size_y\": 20,\n"
-             "    \"rolling_window\": false,\n"
-             "    \"track_unknown\": false,\n"
-             "    \"static_map\": \"" +
-                 (dir / "static_map.pgm").string() +
-                 "\",\n"
-                 "    \"inflation_radius\": 1.0,\n"
-                 "    \"inscribed_radius\": 0.8,\n"
-                 "    \"cost_scaling_factor\": 2.0\n"
-                 "  },\n"
-                 "  \"costmap_local\": {\n"
-                 "    \"size_x\": 20,\n    \"size_y\": 20,\n"
-                 "    \"rolling_window\": true,\n"
-                 "    \"track_unknown\": false,\n"
-                 "    \"inflation_radius\": 1.0,\n"
-                 "    \"inscribed_radius\": 0.8,\n"
-                 "    \"cost_scaling_factor\": 2.0\n"
-                 "  }\n}\n");
+  {
+    // costmap 参数并入 costmap_navigation.json (原 costmap.json 移除)。
+    std::ofstream nav(dir / "costmap_navigation.json", std::ios::app);
+    nav << ",\n  \"costmap\": {\n"
+        << "    \"global_frame\": \"map\",\n"
+        << "    \"local_frame\": \"odom\",\n"
+        << "    \"resolution\": 0.5\n"
+        << "  },\n"
+        << "  \"costmap_global\": {\n"
+        << "    \"size_x\": 20,\n    \"size_y\": 20,\n"
+        << "    \"rolling_window\": false,\n"
+        << "    \"track_unknown\": false,\n"
+        << "    \"static_map\": \"" << (dir / "static_map.pgm").string() << "\",\n"
+        << "    \"inflation_radius\": 1.0,\n"
+        << "    \"inscribed_radius\": 0.8,\n"
+        << "    \"cost_scaling_factor\": 2.0\n"
+        << "  },\n"
+        << "  \"costmap_local\": {\n"
+        << "    \"size_x\": 20,\n    \"size_y\": 20,\n"
+        << "    \"rolling_window\": true,\n"
+        << "    \"track_unknown\": false,\n"
+        << "    \"inflation_radius\": 1.0,\n"
+        << "    \"inscribed_radius\": 0.8,\n"
+        << "    \"cost_scaling_factor\": 2.0\n"
+        << "  }\n"
+        << "}\n";
+  }
 
   write_file(dir / "static_map.pgm", free_pgm(20, 20, 254));
 

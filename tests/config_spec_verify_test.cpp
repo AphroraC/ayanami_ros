@@ -56,6 +56,14 @@ nlohmann::json read_json(const char* config_name) {
   return nlohmann::json::parse(ifs, nullptr, false);
 }
 
+// 读 config_navigation 文件 (costmap 参数已并入其中)。
+nlohmann::json read_navigation_json() {
+  std::ifstream ifs(
+      ayanami::GlobalConfig::get_config_path("config_navigation"));
+  EXPECT_TRUE(ifs.good()) << "cannot open config_navigation";
+  return nlohmann::json::parse(ifs, nullptr, false);
+}
+
 bool pgm_loadable(const std::string& path) {
   costmap_2d_layers::StaticLayer layer;
   try {
@@ -149,7 +157,7 @@ TEST(ConfigSpecVerify, TfStaticEdgesAreValidSyncEdges) {
 TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
   init_config();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_costmap"));
+      ayanami::GlobalConfig::get_config_path("config_navigation"));
 
   // Global spans the full nav_demo map; local remains a rolling window.
   EXPECT_FALSE(cfg.param<bool>("costmap_global", "rolling_window", true));
@@ -174,7 +182,7 @@ TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
 
 TEST(ConfigSpecVerify, CostmapObservationSourcesUseScan) {
   init_config();
-  const auto doc = read_json("config_costmap");
+  const auto doc = read_navigation_json();
   const auto& sources = doc.at("costmap_local").at("observation_sources");
   ASSERT_TRUE(sources.is_array());
   bool found = false;
@@ -211,12 +219,13 @@ TEST(ConfigSpecVerify, NavigationIdsKeepFullPluginNames) {
   // id 统一从各组件 config_* json 的 name 字段读取 (recovery 按 role 分组)。
   auto component_name = [](const std::string& key,
                            const std::string& section) {
-    ayanami::Config cfg(ayanami::GlobalConfig::get_config_path(key));
+    ayanami::Config cfg(
+        ayanami::GlobalConfig::get_config_path("config_navigation", key));
     return cfg.param<std::string>(section, "name", "");
   };
   auto recovery_name_by_role = [](const std::string& role) {
-    for (const auto& path :
-         ayanami::GlobalConfig::get_config_paths("config_recovery")) {
+    for (const auto& path : ayanami::GlobalConfig::get_config_paths(
+             "config_navigation", "config_recovery")) {
       ayanami::Config cfg(path);
       if (cfg.param<std::string>("recovery", "role", "") == role) {
         return cfg.param<std::string>("recovery", "name", "");
@@ -240,7 +249,7 @@ TEST(ConfigSpecVerify, NavigationIdsKeepFullPluginNames) {
 TEST(ConfigSpecVerify, StaticMapLoadsAndNavDemoCompat) {
   init_config();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_costmap"));
+      ayanami::GlobalConfig::get_config_path("config_navigation"));
   const std::string static_map =
       cfg.param<std::string>("costmap_global", "static_map", "");
   ASSERT_FALSE(static_map.empty());
