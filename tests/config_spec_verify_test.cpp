@@ -165,19 +165,27 @@ TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
   EXPECT_FALSE(cfg.has_param("costmap_global", "size_x"));
   EXPECT_FALSE(cfg.has_param("costmap_global", "size_y"));
 
-  // 车体 0.3 (inscribed) + inflation safety margin。
+  // nav_demo/param 对齐: robot_radius=0.12 (圆形车体, inscribed fallback 0.12);
+  // global inflation 0.5/csf 10.0; local inflation 0.2/csf 3.0。
+  EXPECT_DOUBLE_EQ(cfg.param<double>("costmap", "robot_radius", -1.0), 0.12);
   EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_global", "inscribed_radius", -1.0), 0.3);
+      cfg.param<double>("costmap_global", "inscribed_radius", -1.0), 0.12);
   EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "inscribed_radius", -1.0), 0.3);
-  EXPECT_GT(cfg.param<double>("costmap_global", "inflation_radius", 0.0), 0.3);
-  EXPECT_GT(cfg.param<double>("costmap_local", "inflation_radius", 0.0), 0.3);
+      cfg.param<double>("costmap_local", "inscribed_radius", -1.0), 0.12);
+  EXPECT_DOUBLE_EQ(
+      cfg.param<double>("costmap_global", "inflation_radius", 0.0), 0.5);
+  EXPECT_DOUBLE_EQ(
+      cfg.param<double>("costmap_global", "cost_scaling_factor", 0.0), 10.0);
+  EXPECT_DOUBLE_EQ(
+      cfg.param<double>("costmap_local", "inflation_radius", 0.0), 0.2);
+  EXPECT_DOUBLE_EQ(
+      cfg.param<double>("costmap_local", "cost_scaling_factor", 0.0), 3.0);
 
-  // 小车窄场景 obstacle/raytrace range。
+  // 小车窄场景 obstacle/raytrace range (nav_demo common 参数)。
   EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "obstacle_range", -1.0), 2.5);
+      cfg.param<double>("costmap_local", "obstacle_range", -1.0), 3.0);
   EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "raytrace_range", -1.0), 3.0);
+      cfg.param<double>("costmap_local", "raytrace_range", -1.0), 3.5);
 }
 
 TEST(ConfigSpecVerify, CostmapObservationSourcesUseScan) {
