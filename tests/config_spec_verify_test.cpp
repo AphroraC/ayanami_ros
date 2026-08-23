@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -103,16 +104,46 @@ TEST(ConfigSpecVerify, ConfigRosTopicsAndFrames) {
 
 TEST(ConfigSpecVerify, ExtensionModulesIncludeRvizViewer) {
   init_config();
-  const auto doc = read_json("config_ros");
-  const auto& mods = doc.at("ayanami_ros").at("extension_modules");
-  ASSERT_TRUE(mods.is_array());
+  ayanami::Config cfg(
+      ayanami::GlobalConfig::get_config_path("config_ros"));
+  const auto mods = cfg.param<std::vector<std::string>>(
+      "ayanami_ros", "extension_modules", {});
+  ASSERT_FALSE(mods.empty()) << "extension_modules 不能为空";
   bool found = false;
   for (const auto& m : mods) {
-    if (m.is_string() && m.get<std::string>() == "librviz_viewer.so") {
+    if (m == "librviz_viewer.so") {
       found = true;
     }
   }
   EXPECT_TRUE(found) << "extension_modules 应含 librviz_viewer.so";
+}
+
+TEST(ConfigSpecVerify, TfSyncEdgesAreValidPairs) {
+  init_config();
+  ayanami::Config cfg(
+      ayanami::GlobalConfig::get_config_path("config_ros"));
+  const auto edges = cfg.param<std::vector<std::vector<std::string>>>(
+      "ayanami_ros", "tf_sync_edges", {});
+  ASSERT_FALSE(edges.empty()) << "tf_sync_edges 不能为空";
+  for (const auto& edge : edges) {
+    ASSERT_EQ(edge.size(), 2u) << "每条 tf_sync_edges 必须为 2 项";
+    EXPECT_FALSE(edge[0].empty());
+    EXPECT_FALSE(edge[1].empty());
+  }
+}
+
+TEST(ConfigSpecVerify, TfStaticEdgesAreValidSyncEdges) {
+  init_config();
+  ayanami::Config cfg(
+      ayanami::GlobalConfig::get_config_path("config_ros"));
+  const auto sync = cfg.param<std::vector<std::vector<std::string>>>(
+      "ayanami_ros", "tf_sync_edges", {});
+  const auto statics = cfg.param<std::vector<std::vector<std::string>>>(
+      "ayanami_ros", "tf_static_edges", {});
+  for (const auto& edge : statics) {
+    ASSERT_EQ(edge.size(), 2u);
+    EXPECT_NE(std::find(sync.begin(), sync.end(), edge), sync.end());
+  }
 }
 
 TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
@@ -120,10 +151,11 @@ TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
   ayanami::Config cfg(
       ayanami::GlobalConfig::get_config_path("config_costmap"));
 
-  // M2 Ruling #M2-4: global 滚动跟随 (nav_demo 99m 大地图) / local rolling
-  // (spec §8.3 原 global 全图固定, Task 12 stage C carry 修订)。
-  EXPECT_TRUE(cfg.param<bool>("costmap_global", "rolling_window", true));
+  // Global spans the full nav_demo map; local remains a rolling window.
+  EXPECT_FALSE(cfg.param<bool>("costmap_global", "rolling_window", true));
   EXPECT_TRUE(cfg.param<bool>("costmap_local", "rolling_window", false));
+  EXPECT_FALSE(cfg.has_param("costmap_global", "size_x"));
+  EXPECT_FALSE(cfg.has_param("costmap_global", "size_y"));
 
   // 车体 0.3 (inscribed) + inflation safety margin。
   EXPECT_DOUBLE_EQ(
@@ -175,18 +207,33 @@ TEST(ConfigSpecVerify, RobotFrameSingleSource) {
 
 TEST(ConfigSpecVerify, NavigationIdsKeepFullPluginNames) {
   init_config();
-  ayanami::Config nav(
-      ayanami::GlobalConfig::get_config_path("config_navigation"));
-  // Ruling #8: *_id 值 == 插件 full name (含 _recovery 后缀), 不破。
-  EXPECT_EQ(nav.param<std::string>("navigation", "spin_id", ""),
-            "costmap_spin_recovery");
-  EXPECT_EQ(nav.param<std::string>("navigation", "wait_id", ""),
-            "costmap_wait_recovery");
-  EXPECT_EQ(nav.param<std::string>("navigation", "backup_id", ""),
-            "costmap_back_up_recovery");
-  EXPECT_EQ(nav.param<std::string>("navigation", "clear_costmap_id", ""),
-            "costmap_clear_costmap_recovery");
-  EXPECT_EQ(nav.param<std::string>("navigation", "recovery_id", ""),
+  // Ruling #8: 插件 id == 插件 full name (含 _recovery 后缀), 不破。
+  // id 统一从各组件 config_* json 的 name 字段读取 (recovery 按 role 分组)。
+  auto component_name = [](const std::string& key,
+                           const std::string& section) {
+    ayanami::Config cfg(ayanami::GlobalConfig::get_config_path(key));
+    return cfg.param<std::string>(section, "name", "");
+  };
+  auto recovery_name_by_role = [](const std::string& role) {
+    for (const auto& path :
+         ayanami::GlobalConfig::get_config_paths("config_recovery")) {
+      ayanami::Config cfg(path);
+      if (cfg.param<std::string>("recovery", "role", "") == role) {
+        return cfg.param<std::string>("recovery", "name", "");
+      }
+    }
+    return std::string("");
+  };
+
+  EXPECT_EQ(component_name("config_planner", "planner"), "costmap_smac");
+  EXPECT_EQ(component_name("config_smoother", "smoother"),
+            "costmap_savitzky");
+  EXPECT_EQ(component_name("config_controller", "controller"),
+            "costmap_pid");
+  EXPECT_EQ(recovery_name_by_role("spin"), "costmap_spin_recovery");
+  EXPECT_EQ(recovery_name_by_role("wait"), "costmap_wait_recovery");
+  EXPECT_EQ(recovery_name_by_role("backup"), "costmap_back_up_recovery");
+  EXPECT_EQ(recovery_name_by_role("clear_costmap"),
             "costmap_clear_costmap_recovery");
 }
 
@@ -204,13 +251,25 @@ TEST(ConfigSpecVerify, StaticMapLoadsAndNavDemoCompat) {
   ASSERT_TRUE(std::filesystem::exists(assets_map)) << assets_map;
   EXPECT_TRUE(pgm_loadable(assets_map.string()));
 
-  // nav_demo 地图 (nav.yaml → nav.pgm) 同 loader 可兼容加载 (与 M1 兼容载)。
+  // nav_demo 的 ROS YAML adapter 与 Ayanami JSON 配置相互独立。
   const std::filesystem::path nav_demo_map =
       std::filesystem::path(g_nav_demo_map_dir) / "nav.pgm";
   if (std::filesystem::exists(nav_demo_map)) {
     EXPECT_TRUE(pgm_loadable(nav_demo_map.string()));
   } else {
     GTEST_SKIP() << "nav_demo map not present: " << nav_demo_map;
+  }
+}
+
+TEST(ConfigSpecVerify, AyanamiConfigurationContainsNoYaml) {
+  const std::filesystem::path config_dir(AYANAMI_TEST_CONFIG_DIR);
+  const std::filesystem::path assets_dir(AYANAMI_TEST_ASSETS_DIR);
+  for (const auto& root : {config_dir, assets_dir}) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+      const auto extension = entry.path().extension().string();
+      EXPECT_NE(extension, ".yaml") << entry.path();
+      EXPECT_NE(extension, ".yml") << entry.path();
+    }
   }
 }
 

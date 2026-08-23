@@ -73,7 +73,7 @@ std::filesystem::path make_config_dir() {
              "    \"config_planner\": \"costmap_smac_planner.json\",\n"
              "    \"config_smoother\": \"costmap_savitzky_smoother.json\",\n"
              "    \"config_controller\": \"costmap_pid_controller.json\",\n"
-             "    \"config_recovery\": \"costmap_clear_costmap_recovery.json\"\n"
+             "    \"config_recovery\": [\"costmap_clear_costmap_recovery.json\"]\n"
              "  }\n}\n");
 
   write_file(dir / "costmap_navigation.json",
