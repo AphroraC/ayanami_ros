@@ -9,6 +9,7 @@
 #include <ayanami/interfaces/callbacks.hpp>
 #include <ayanami/interfaces/transform_store.hpp>
 #include <ayanami/utility/load_module.hpp>
+#include <ayanami/utility/logging.hpp>
 
 #include <ayanami_ros/ros_msg_converter.hpp>
 
@@ -90,6 +91,7 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   // 注意: 默认值里 ros::package::getPath() 只有在 param 缺失时才求值 (避免
   // 无 roscore 测试环境触发 rospack 的 tinyxml2 符号冲突 / roscore 依赖)。
   ayanami::GlobalConfig::instance(config_path_, /*override_path=*/true);
+  ayanami::configure_logging();
   ayanami::Config config_ros(
       ayanami::GlobalConfig::get_config_path("config_ros"));
 
