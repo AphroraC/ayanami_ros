@@ -184,7 +184,7 @@ Visualization Manager:
       Angular Arrow Scale: 2
       Angular Color: 204; 204; 51
       Arrow Width: 0.5
-      Class: rviz/Twist
+      Class: rviz/TwistStamped
       Enabled: true
       Hide Small Values: true
       History Length: 1
