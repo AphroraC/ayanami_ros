@@ -9,6 +9,8 @@
 
 #include <ros/ros.h>
 
+#include <geometry_msgs/TransformStamped.h>
+
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
@@ -22,6 +24,10 @@ namespace ayanami_ros {
  * map→base_link])。lookup_transform 内部 lookupTransform(target, source,
  * stamp, ros::Duration(timeout)) → tf2::transformToEigen → Eigen::Isometry3d,
  * 抛 tf2::TransformException 时返回 false。
+ *
+ * 时间语义: stamp=ros::Time(0) 表示 latest; TransformStamped 重载同时返回
+ * buffer 给出的真实 geometry_msgs::TransformStamped.header.stamp, 供写入
+ * TransformStore 时不用 ros::Time::now() 伪造。
  */
 class TF2Listener {
 public:
@@ -29,7 +35,15 @@ public:
               const std::vector<std::pair<std::string, std::string>>& edges);
 
   /// @brief 查 source→target 变换; stamp=ros::Time(0) 表示 latest。
-  /// @return true 填 @p out; false (timeout 秒内无可用 TF)。
+  /// @return true 填 @p out (真实 header.stamp 一并返回), false (timeout 秒内无
+  /// 可用 TF)。
+  bool lookup_transform(const std::string& target, const std::string& source,
+                        const ros::Time& stamp,
+                        geometry_msgs::TransformStamped& out,
+                        double timeout = 0.0);
+
+  /// @brief 同上的 Eigen 版本 (内部委托 TransformStamped 重载)。
+  /// @return true 填 @p out, false (timeout 秒内无可用 TF)。
   bool lookup_transform(const std::string& target, const std::string& source,
                         const ros::Time& stamp, Eigen::Isometry3d& out,
                         double timeout = 0.0);

@@ -20,13 +20,28 @@
 namespace ayanami_ros {
 
 // spec §6: Eigen ↔ ROS msgs。header-only inline 实现 (轻便, 无需 .cpp)。
-// M1 core 消息 Header 无 stamp 字段 (只 seq + frame_id), ROS header 时间戳不跨层。
+// Header stamp 双向完整转换: ros::Time ↔ ayanami::Timestamp (纳秒)。
+// 语义对齐以 TF 通语义: ayanami::Timestamp::latest() (0ns) ↔ ros::Time(0)。
 
 namespace detail {
+
+inline ayanami::Timestamp fromRosTime(const ros::Time& in) {
+  return ayanami::Timestamp{static_cast<std::int64_t>(in.toNSec())};
+}
+
+inline ros::Time toRosTime(const ayanami::Timestamp& in) {
+  if (in.isLatest()) {
+    return ros::Time(0);
+  }
+  ros::Time out;
+  out.fromNSec(static_cast<uint64_t>(in.count()));
+  return out;
+}
 
 inline ayanami::geometry_msgs::Header fromRosHeader(const std_msgs::Header& in) {
   ayanami::geometry_msgs::Header out;
   out.seq = in.seq;
+  out.stamp = fromRosTime(in.stamp);
   out.frame_id = in.frame_id;
   return out;
 }
@@ -34,6 +49,7 @@ inline ayanami::geometry_msgs::Header fromRosHeader(const std_msgs::Header& in) 
 inline std_msgs::Header toRosHeader(const ayanami::geometry_msgs::Header& in) {
   std_msgs::Header out;
   out.seq = in.seq;
+  out.stamp = toRosTime(in.stamp);
   out.frame_id = in.frame_id;
   return out;
 }

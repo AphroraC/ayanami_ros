@@ -18,17 +18,28 @@ TF2Listener::TF2Listener(
 bool TF2Listener::lookup_transform(const std::string& target,
                                    const std::string& source,
                                    const ros::Time& stamp,
-                                   Eigen::Isometry3d& out, double timeout) {
+                                   geometry_msgs::TransformStamped& out,
+                                   double timeout) {
   try {
-    const geometry_msgs::TransformStamped tf_msg =
-        buffer_.lookupTransform(target, source, stamp, ros::Duration(timeout));
-    out = tf2::transformToEigen(tf_msg);
+    out = buffer_.lookupTransform(target, source, stamp, ros::Duration(timeout));
     return true;
   } catch (const tf2::TransformException& e) {
     ROS_WARN_THROTTLE(1.0, "TF2 lookup failed (%s <- %s): %s",
                       target.c_str(), source.c_str(), e.what());
     return false;
   }
+}
+
+bool TF2Listener::lookup_transform(const std::string& target,
+                                   const std::string& source,
+                                   const ros::Time& stamp,
+                                   Eigen::Isometry3d& out, double timeout) {
+  geometry_msgs::TransformStamped tf_msg;
+  if (!lookup_transform(target, source, stamp, tf_msg, timeout)) {
+    return false;
+  }
+  out = tf2::transformToEigen(tf_msg);
+  return true;
 }
 
 }  // namespace ayanami_ros

@@ -1,12 +1,10 @@
 #include <ayanami_ros/ayanami_ros.hpp>
 
 #include <cstdlib>
-#include <fstream>
 #include <stdexcept>
 
-#include <nlohmann/json.hpp>
-
 #include <ros/package.h>
+#include <tf2_eigen/tf2_eigen.h>
 
 #include <ayanami/interfaces/callbacks.hpp>
 #include <ayanami/interfaces/transform_store.hpp>
@@ -19,74 +17,50 @@
 namespace ayanami_ros {
 namespace {
 
-// M1 Config 未显式实例化 std::vector<std::string> param (config.cpp 的
-// DEFINE_CONFIG_IO_SPECIALIZATION 列表无 vector<string>)。故 loadExtensionModules
-// 直接从 config_ros.json 文件读取 extension_modules 数组 (spec §4.5 step 1)。
-// 用 ayanami vendored nlohmann (3.11.3, 系统 3.7.3 与本 toolchain 不兼容)。
-std::vector<std::string> readExtensionModules(const std::string& path) {
-  try {
-    std::ifstream ifs(path);
-    if (!ifs) {
-      return {};
-    }
-    const nlohmann::json doc = nlohmann::json::parse(ifs, nullptr, false);
-    const auto ros_it = doc.find("ayanami_ros");
-    if (ros_it == doc.end() || !ros_it->is_object()) {
-      return {};
-    }
-    const auto it = ros_it->find("extension_modules");
-    if (it == ros_it->end() || !it->is_array()) {
-      return {};
-    }
-    return it->get<std::vector<std::string>>();
-  } catch (const nlohmann::json::exception& e) {
-    spdlog::error("readExtensionModules({}): {}", path, e.what());
-    return {};
-  }
-}
-
-// M1 Config 未实例化 vector<string> 的嵌套 pair 序列, 直接 nlohmann 读
-// config_ros.json::ayanami_ros::tf_sync_edges 列表 [[target, source], ...]
-// (spec §7, §4.4)。缺失时用配置 frame 回退默认三条边。
+// 经 Config API (config_ros.json) 读取 tf_sync_edges 列表 [[target, source], ...]
+// (spec §7, §4.4)。每条边须正好 2 项 (size==2), 否则跳过; 列表缺失/为空时用
+// 配置 map_frame/odom_frame/robot_frame 构造默认三条边。
 std::vector<std::pair<std::string, std::string>> readTfSyncEdges(
-    const std::string& path) {
+    const std::string& config_ros_path) {
+  ayanami::Config config_ros(config_ros_path);
+  const std::string kSec = "ayanami_ros";
+  const std::string map_frame =
+      config_ros.param<std::string>(kSec, "map_frame", "map");
+  const std::string odom_frame =
+      config_ros.param<std::string>(kSec, "odom_frame", "odom");
+  const std::string robot_frame = config_ros.param<std::string>(
+      kSec, "robot_frame", "base_footprint");
+
   std::vector<std::pair<std::string, std::string>> edges;
-  std::string map_frame = "map", odom_frame = "odom", robot_frame = "base_link";
-  try {
-    std::ifstream ifs(path);
-    if (ifs) {
-      const nlohmann::json doc = nlohmann::json::parse(ifs, nullptr, false);
-      const auto ros_it = doc.find("ayanami_ros");
-      if (ros_it != doc.end() && ros_it->is_object()) {
-        auto read_str = [&ros_it](const char* key, const std::string& def) {
-          const auto it = ros_it->find(key);
-          return (it != ros_it->end() && it->is_string())
-                     ? it->get<std::string>()
-                     : def;
-        };
-        map_frame = read_str("map_frame", map_frame);
-        odom_frame = read_str("odom_frame", odom_frame);
-        robot_frame = read_str("robot_frame", robot_frame);
-        const auto it = ros_it->find("tf_sync_edges");
-        if (it != ros_it->end() && it->is_array()) {
-          for (const auto& e : *it) {
-            if (e.is_array() && e.size() == 2 && e[0].is_string() &&
-                e[1].is_string()) {
-              edges.emplace_back(e[0].get<std::string>(),
-                                 e[1].get<std::string>());
-            }
-          }
-        }
-      }
+  const auto raw = config_ros.param<std::vector<std::vector<std::string>>>(
+      kSec, "tf_sync_edges", {});
+  for (const auto& edge : raw) {
+    if (edge.size() != 2) {
+      spdlog::warn("tf_sync_edges entry has size {} != 2, skipped",
+                   edge.size());
+      continue;
     }
-  } catch (const nlohmann::json::exception& e) {
-    spdlog::error("readTfSyncEdges({}): {}", path, e.what());
+    edges.emplace_back(edge[0], edge[1]);
   }
   if (edges.empty()) {
     // spec §4.4 默认: map→odom, odom→base_link, map→base_link。
     edges = {{map_frame, odom_frame},
              {odom_frame, robot_frame},
              {map_frame, robot_frame}};
+  }
+  return edges;
+}
+
+std::set<std::pair<std::string, std::string>> readTfStaticEdges(
+    const std::string& config_ros_path) {
+  ayanami::Config config_ros(config_ros_path);
+  std::set<std::pair<std::string, std::string>> edges;
+  const auto raw = config_ros.param<std::vector<std::vector<std::string>>>(
+      "ayanami_ros", "tf_static_edges", {});
+  for (const auto& edge : raw) {
+    if (edge.size() == 2) {
+      edges.emplace(edge[0], edge[1]);
+    }
   }
   return edges;
 }
@@ -108,6 +82,8 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
     : nh_(nh),
       config_path_(resolveConfigPath(nh)),
       tf_listener_(nh, readTfSyncEdges(config_path_ + "/config_ros.json")),
+      configured_static_edges_(
+          readTfStaticEdges(config_path_ + "/config_ros.json")),
       navigation_so_name_("libayanami_costmap_navigation.so"),
       navigation_create_symbol_("create_navigation_module") {
   // spec §4.2 verbatim 顺序。
@@ -169,10 +145,8 @@ void AyanamiROS::stop() {
 }
 
 void AyanamiROS::loadExtensionModules(const ayanami::Config& config_ros) {
-  (void)config_ros;
-  const std::string config_ros_path =
-      ayanami::GlobalConfig::get_config_path("config_ros");
-  const auto modules = readExtensionModules(config_ros_path);
+  const auto modules = config_ros.param<std::vector<std::string>>(
+      "ayanami_ros", "extension_modules", {});
   for (const auto& module : modules) {
     spdlog::info("load ayanami_ros extension module {}", module);
     auto ext = ayanami::ExtensionModule::load_module(module);
@@ -244,12 +218,15 @@ void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
 void AyanamiROS::pointcloudCallback(
     const sensor_msgs::PointCloud2::ConstPtr& msg) {
   // Task 8: ros_msg_converter 统一转换 (spec §4.3)。
+  // Populate the core TF buffer at the observation time before emitting it.
+  syncTransformsToCore(msg->header.stamp, 0.05);
   const ayanami::sensor_msgs::PointCloud2 cloud = fromRosPointCloud2(*msg);
   ayanami::interfaces::NavigationCallbacks::on_obstacle_pointcloud(cloud);
 }
 
 void AyanamiROS::laserscanCallback(
     const sensor_msgs::LaserScan::ConstPtr& msg) {
+  syncTransformsToCore(msg->header.stamp, 0.05);
   const ayanami::sensor_msgs::LaserScan scan = fromRosLaserScan(*msg);
   ayanami::interfaces::NavigationCallbacks::on_obstacle_laserscan(scan);
 }
@@ -267,28 +244,47 @@ void AyanamiROS::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
 }
 
 void AyanamiROS::syncTransformsToCore() {
-  // Task 7: 真实 TF2Listener 接入 (spec §4.4)。
+  // Task 7+ (时间语义): 真实 TF2Listener 接入 (spec §4.4)。
   // 对 tf_sync_edges_ 每条边 lookup_transform(target, source, ros::Time(0))
-  // → Eigen::Isometry3d → TransformStore::setTransform (stamp 用当前时间,
-  // 替代 M1 默认 0s; lookup 用 Time(0) 即 latest)。
+  // → TransformStamped → Eigen::Isometry3d → TransformStore::setTransform。
+  // stamp 用 TF2 buffer 返回的真实 TransformStamped.header.stamp (传感器/TF
+  // 发布时刻), 不再用 ros::Time::now() 伪造; lookup 用 Time(0) 即 latest。
+  syncTransformsToCore(ros::Time(0), 0.0);
+}
+
+void AyanamiROS::syncTransformsToCore(const ros::Time& stamp,
+                                      double timeout) {
   ayanami::interfaces::TransformStore& store =
       ayanami::interfaces::TransformStore::instance();
-  const double now = ros::Time::now().toSec();
   for (const auto& edge : tf_listener_.tfSyncEdges()) {
     const std::string& target = edge.first;
     const std::string& source = edge.second;
-    Eigen::Isometry3d T;
-    if (tf_listener_.lookup_transform(target, source, ros::Time(0), T)) {
-      store.setTransform(
-          target, source,
-          ayanami::interfaces::TransformStore::fromSeconds(now), T);
+    geometry_msgs::TransformStamped tf_msg;
+    if (tf_listener_.lookup_transform(target, source, stamp, tf_msg, timeout)) {
+      // TF2 returns stamp=0 for a static edge queried as latest, but echoes a
+      // concrete query time for the same static edge. fast_tf forbids changing
+      // a link between static and dynamic, so classify each configured edge
+      // once and keep that type for its process lifetime.
+      bool is_static = false;
+      {
+        std::lock_guard<std::mutex> lock(tf_edge_mutex_);
+        const auto key = std::make_pair(target, source);
+        const bool configured_static = configured_static_edges_.count(key) != 0;
+        const auto inserted = tf_edge_static_.emplace(key, configured_static);
+        is_static = inserted.first->second;
+      }
+      const auto core_stamp =
+          is_static ? ayanami::Timestamp::latest()
+                    : detail::fromRosTime(tf_msg.header.stamp);
+      store.setTransform(target, source, core_stamp,
+                         tf2::transformToEigen(tf_msg), is_static);
     }
   }
 }
 
 void AyanamiROS::loop() {
   const double rate_hz = tf_sync_rate_ > 0.0 ? tf_sync_rate_ : 50.0;
-  ros::Rate rate(rate_hz);
+  ros::WallRate rate(rate_hz);
   spdlog::info("AyanamiROS loop started rate={:.1f}Hz", rate_hz);
   while (ros::ok() && !kill_switch_.load()) {
     syncTransformsToCore();

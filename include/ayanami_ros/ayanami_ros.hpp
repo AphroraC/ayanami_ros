@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <memory>
+#include <map>
+#include <set>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -14,7 +16,7 @@
 #include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/PointCloud2.h>
 
-#include <ayanami/core/abstract_navigation.hpp>
+#include <ayanami/abstract/core/abstract_navigation.hpp>
 #include <ayanami/messages/geometry_msgs.hpp>
 #include <ayanami/utility/config.hpp>
 
@@ -51,6 +53,9 @@ class AyanamiROS {
   std::atomic<bool> kill_switch_{false};
   std::thread loop_thread_;
   std::mutex goal_mutex_;
+  std::mutex tf_edge_mutex_;
+  std::map<std::pair<std::string, std::string>, bool> tf_edge_static_;
+  std::set<std::pair<std::string, std::string>> configured_static_edges_;
   double tf_sync_rate_ = 50.0;
 
   // config_ros.json::ayanami_ros 边界参数 (spec §8.1)。
@@ -83,6 +88,7 @@ private:
   void laserscanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void syncTransformsToCore();
+  void syncTransformsToCore(const ros::Time& stamp, double timeout);
   void loop();
 };
 
