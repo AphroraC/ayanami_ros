@@ -29,16 +29,15 @@ namespace {
 
 constexpr double kTol = 1e-6;
 
-Eigen::Isometry3d makePose(double x, double y, double z, double yaw) {
+ayanami::geometry_msgs::Pose makePose(double x, double y, double z, double yaw) {
   Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
   iso.translation() = Eigen::Vector3d(x, y, z);
   iso.linear() = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-  return iso;
+  return ayanami::geometry_msgs::Pose::fromIsometry(iso);
 }
 
-TEST(RosMsgConverter, PoseStampedRosToCoreToRosRoundTrip) {
+TEST(RosMsgConverter, poseStampedRosToCoreToRosRoundTrip) {
   geometry_msgs::PoseStamped ros_in;
-  ros_in.header.seq = 7;
   ros_in.header.frame_id = "map";
   ros_in.header.stamp = ros::Time(10.0);
   ros_in.pose.position.x = 1.0;
@@ -52,17 +51,15 @@ TEST(RosMsgConverter, PoseStampedRosToCoreToRosRoundTrip) {
   ros_in.pose.orientation.w = q.w();
 
   const auto core = ayanami_ros::fromRosPose(ros_in);
-  EXPECT_EQ(core.header.seq, 7u);
   EXPECT_EQ(core.header.frame_id, "map");
   EXPECT_EQ(core.header.stamp.count(), 10000000000LL);
   EXPECT_NEAR(core.header.stamp.toSeconds(), 10.0, kTol);
-  EXPECT_NEAR(core.pose.translation().x(), 1.0, kTol);
-  EXPECT_NEAR(core.pose.translation().y(), 2.0, kTol);
-  EXPECT_NEAR(core.pose.translation().z(), 3.0, kTol);
-  EXPECT_NEAR(core.pose.linear().determinant(), 1.0, kTol);
+  EXPECT_NEAR(core.pose.position.x(), 1.0, kTol);
+  EXPECT_NEAR(core.pose.position.y(), 2.0, kTol);
+  EXPECT_NEAR(core.pose.position.z(), 3.0, kTol);
+  EXPECT_NEAR(core.pose.orientation.norm(), 1.0, kTol);
 
   const auto ros_out = ayanami_ros::toRosPose(core);
-  EXPECT_EQ(ros_out.header.seq, 7u);
   EXPECT_EQ(ros_out.header.frame_id, "map");
   EXPECT_EQ(ros_out.header.stamp, ros::Time(10.0));
   EXPECT_NEAR(ros_out.pose.position.x, 1.0, kTol);
@@ -72,11 +69,10 @@ TEST(RosMsgConverter, PoseStampedRosToCoreToRosRoundTrip) {
   EXPECT_NEAR(ros_out.pose.orientation.z, q.z(), kTol);
 }
 
-TEST(RosMsgConverter, PoseStampedCoreToRosToCoreRoundTrip) {
+TEST(RosMsgConverter, poseStampedCoreToRosToCoreRoundTrip) {
   ayanami::geometry_msgs::PoseStamped core_in =
-      ayanami::geometry_msgs::PoseStamped::fromIsometry("odom",
-                                                        makePose(0.5, -1.5, 2.0, M_PI));
-  core_in.header.seq = 3;
+      ayanami::geometry_msgs::PoseStamped::fromIsometry(
+          "odom", makePose(0.5, -1.5, 2.0, M_PI).toIsometry());
 
   const auto ros = ayanami_ros::toRosPose(core_in);
   EXPECT_EQ(ros.header.frame_id, "odom");
@@ -85,14 +81,12 @@ TEST(RosMsgConverter, PoseStampedCoreToRosToCoreRoundTrip) {
   EXPECT_NEAR(ros.pose.position.z, 2.0, kTol);
 
   const auto core_out = ayanami_ros::fromRosPose(ros);
-  EXPECT_EQ(core_out.header.seq, 3u);
   EXPECT_EQ(core_out.header.frame_id, "odom");
-  EXPECT_TRUE(core_out.pose.matrix().isApprox(core_in.pose.matrix(), kTol));
+  EXPECT_TRUE(core_out.pose.toIsometry().matrix().isApprox(core_in.pose.toIsometry().matrix(), kTol));
 }
 
-TEST(RosMsgConverter, TwistStampedRoundTrip) {
+TEST(RosMsgConverter, twistStampedRoundTrip) {
   geometry_msgs::TwistStamped ros_in;
-  ros_in.header.seq = 5;
   ros_in.header.frame_id = "base_link";
   ros_in.header.stamp = ros::Time(3.5);
   ros_in.twist.linear.x = 1.0;
@@ -110,7 +104,6 @@ TEST(RosMsgConverter, TwistStampedRoundTrip) {
   EXPECT_NEAR(core.twist.angular.z(), 0.3, kTol);
 
   const auto ros_out = ayanami_ros::toRosTwist(core);
-  EXPECT_EQ(ros_out.header.seq, 5u);
   EXPECT_EQ(ros_out.header.frame_id, "base_link");
   EXPECT_EQ(ros_out.header.stamp, ros::Time(3.5));
   EXPECT_NEAR(ros_out.twist.linear.x, 1.0, kTol);
@@ -119,16 +112,15 @@ TEST(RosMsgConverter, TwistStampedRoundTrip) {
   EXPECT_NEAR(ros_out.twist.angular.z, 0.3, kTol);
 }
 
-TEST(RosMsgConverter, PathToRosMultiPose) {
+TEST(RosMsgConverter, pathToRosMultiPose) {
   ayanami::nav_msgs::Path core_in;
   core_in.header.frame_id = "map";
-  core_in.header.seq = 2;
   core_in.poses.push_back(ayanami::geometry_msgs::PoseStamped::fromIsometry(
-      "map", makePose(0.0, 0.0, 0.0, 0.0)));
+      "map", makePose(0.0, 0.0, 0.0, 0.0).toIsometry()));
   core_in.poses.push_back(ayanami::geometry_msgs::PoseStamped::fromIsometry(
-      "map", makePose(1.0, 0.0, 0.0, M_PI / 4.0)));
+      "map", makePose(1.0, 0.0, 0.0, M_PI / 4.0).toIsometry()));
   core_in.poses.push_back(ayanami::geometry_msgs::PoseStamped::fromIsometry(
-      "map", makePose(2.0, 1.0, 0.0, M_PI / 2.0)));
+      "map", makePose(2.0, 1.0, 0.0, M_PI / 2.0).toIsometry()));
 
   const auto ros = ayanami_ros::toRosPath(core_in);
   EXPECT_EQ(ros.header.frame_id, "map");
@@ -136,15 +128,15 @@ TEST(RosMsgConverter, PathToRosMultiPose) {
   for (size_t i = 0; i < ros.poses.size(); ++i) {
     // Path 无 fromRosPath 反向接口, 逐 pose 经 fromRosPose 反查一致。
     const auto back = ayanami_ros::fromRosPose(ros.poses[i]);
-    EXPECT_TRUE(back.pose.matrix().isApprox(core_in.poses[i].pose.matrix(), kTol))
+    EXPECT_TRUE(back.pose.toIsometry().matrix().isApprox(
+        core_in.poses[i].pose.toIsometry().matrix(), kTol))
         << "pose " << i;
   }
 }
 
-TEST(RosMsgConverter, OccupancyGridToRosBasicFields) {
+TEST(RosMsgConverter, occupancyGridToRosBasicFields) {
   ayanami::nav_msgs::OccupancyGrid core_in;
   core_in.header.frame_id = "map";
-  core_in.header.seq = 9;
   core_in.info.resolution = 0.05;
   core_in.info.width = 40;
   core_in.info.height = 30;
@@ -165,9 +157,8 @@ TEST(RosMsgConverter, OccupancyGridToRosBasicFields) {
   EXPECT_EQ(ros.data[2], -1);
 }
 
-TEST(RosMsgConverter, LaserScanFromRosBasicFields) {
+TEST(RosMsgConverter, laserScanFromRosBasicFields) {
   sensor_msgs::LaserScan ros_in;
-  ros_in.header.seq = 4;
   ros_in.header.frame_id = "laser";
   ros_in.header.stamp = ros::Time(2.0);
   ros_in.angle_min = -1.5707963f;
@@ -196,9 +187,8 @@ TEST(RosMsgConverter, LaserScanFromRosBasicFields) {
   EXPECT_FLOAT_EQ(core.intensities[0], 10.0f);
 }
 
-TEST(RosMsgConverter, PointCloud2FromRosFields) {
+TEST(RosMsgConverter, pointCloud2FromRosFields) {
   sensor_msgs::PointCloud2 ros_in;
-  ros_in.header.seq = 1;
   ros_in.header.frame_id = "lidar";
   ros_in.header.stamp = ros::Time(4.25);
   ros_in.height = 1;
@@ -241,7 +231,7 @@ TEST(RosMsgConverter, PointCloud2FromRosFields) {
   EXPECT_EQ(core.is_dense, true);
 }
 
-TEST(RosMsgConverter, PointCloud2RoundTrip) {
+TEST(RosMsgConverter, pointCloud2RoundTrip) {
   sensor_msgs::PointCloud2 ros_in;
   ros_in.header.frame_id = "lidar";
   ros_in.height = 1;
@@ -270,7 +260,7 @@ TEST(RosMsgConverter, PointCloud2RoundTrip) {
   EXPECT_EQ(ros_out.is_dense, false);
 }
 
-TEST(RosMsgConverter, HeaderStampRoundTripThroughAllConverterKinds) {
+TEST(RosMsgConverter, headerStampRoundTripThroughAllConverterKinds) {
   // Pose / Twist / LaserScan / PointCloud2 的 header.stamp 双向完整转换:
   // ros::Time ↔ ayanami::Timestamp (纳秒)。
   geometry_msgs::PoseStamped pose_in;
@@ -293,11 +283,11 @@ TEST(RosMsgConverter, HeaderStampRoundTripThroughAllConverterKinds) {
   EXPECT_EQ(cloud_out.header.stamp, ros::Time(9.0));
 }
 
-TEST(RosMsgConverter, HeaderLatestSentinelMapsToRosTimeZero) {
+TEST(RosMsgConverter, headerLatestSentinelMapsToRosTimeZero) {
   // ayanami 显式 latest 哨兵 (0ns) ↔ ros::Time(0) (TF latest 惯例)。
   ayanami::geometry_msgs::PoseStamped core_in =
-      ayanami::geometry_msgs::PoseStamped::fromIsometry("map",
-                                                        makePose(0.0, 0.0, 0.0, 0.0));
+      ayanami::geometry_msgs::PoseStamped::fromIsometry(
+          "map", makePose(0.0, 0.0, 0.0, 0.0).toIsometry());
   ASSERT_TRUE(core_in.header.stamp.isLatest());
 
   const auto ros = ayanami_ros::toRosPose(core_in);

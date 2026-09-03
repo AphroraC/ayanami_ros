@@ -1,8 +1,8 @@
 // Task 7: TF2Listener TDD 测试。
 //
 // 两条用例:
-//   1. 无 roscore / 空 buffer: buffer_.lookupTransform 抛 tf2::TransformException
-//      → TF2Listener::lookup_transform 返回 false (catch 分支)。
+//   1. 无 roscore / 空 buffer: buffer.lookupTransform 抛 tf2::TransformException
+//      → TF2Listener::lookupTransform 返回 false (catch 分支)。
 //   2. 真 roscore: 用 tf2_ros::StaticBroadcaster 发布一个静态 transform, 等待
 //      latched /tf_static 送达 listener 的 dedicated thread 后 lookup, 验证
 //      返回非零、非单位阵的 Eigen::Isometry3d。无 master 时 GTEST_SKIP。
@@ -21,21 +21,21 @@
 
 namespace {
 
-TEST(TF2Listener, LookupTransformEmptyReturnsFalse) {
+TEST(TF2Listener, lookupTransformEmptyReturnsFalse) {
   ros::NodeHandle nh("~");
   ayanami_ros::TF2Listener listener(
       nh, {{"map", "odom"}, {"odom", "base_link"}, {"map", "base_link"}});
 
   Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
   // 无 roscore: buffer 恒空, lookupTransform(..., Duration(0)) 立即抛
-  // tf2::TransformException (LookupException) → lookup_transform 吞异常返 false。
-  EXPECT_FALSE(listener.lookup_transform("map", "odom", ros::Time(0), out));
+  // tf2::TransformException (LookupException) → lookupTransform 吞异常返 false。
+  EXPECT_FALSE(listener.lookupTransform("map", "odom", ros::Time(0), out));
 
   geometry_msgs::TransformStamped ts;
-  EXPECT_FALSE(listener.lookup_transform("map", "odom", ros::Time(0), ts));
+  EXPECT_FALSE(listener.lookupTransform("map", "odom", ros::Time(0), ts));
 }
 
-TEST(TF2Listener, LookupStaticBroadcastTransform) {
+TEST(TF2Listener, lookupStaticBroadcastTransform) {
   if (!ros::master::check()) {
     GTEST_SKIP() << "requires roscore";
   }
@@ -66,13 +66,13 @@ TEST(TF2Listener, LookupStaticBroadcastTransform) {
   // 返回最新动态帧, stamp 应为发布时刻。
   geometry_msgs::TransformStamped ts_out;
   ASSERT_TRUE(
-      listener.lookup_transform("map", "odom", ros::Time(0), ts_out, 2.0));
+      listener.lookupTransform("map", "odom", ros::Time(0), ts_out, 2.0));
   EXPECT_NEAR(ts_out.header.stamp.toSec(), ts.header.stamp.toSec(), 0.1);
   EXPECT_NEAR(ts_out.transform.translation.x, 1.0, 1e-6);
 
   // Eigen 重载仍可用, 且平移 == 发布的 (1, 2, 3)。
   Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
-  ASSERT_TRUE(listener.lookup_transform("map", "odom", ros::Time(0), out, 2.0));
+  ASSERT_TRUE(listener.lookupTransform("map", "odom", ros::Time(0), out, 2.0));
   // 验证非零非单位阵, 且平移 == 发布的 (1, 2, 3)。
   EXPECT_FALSE(out.isApprox(Eigen::Isometry3d::Identity(), 1e-6));
   EXPECT_GT(out.translation().norm(), 0.0);

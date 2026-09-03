@@ -40,7 +40,6 @@ inline ros::Time toRosTime(const ayanami::Timestamp& in) {
 
 inline ayanami::geometry_msgs::Header fromRosHeader(const std_msgs::Header& in) {
   ayanami::geometry_msgs::Header out;
-  out.seq = in.seq;
   out.stamp = fromRosTime(in.stamp);
   out.frame_id = in.frame_id;
   return out;
@@ -48,7 +47,6 @@ inline ayanami::geometry_msgs::Header fromRosHeader(const std_msgs::Header& in) 
 
 inline std_msgs::Header toRosHeader(const ayanami::geometry_msgs::Header& in) {
   std_msgs::Header out;
-  out.seq = in.seq;
   out.stamp = toRosTime(in.stamp);
   out.frame_id = in.frame_id;
   return out;
@@ -58,31 +56,25 @@ inline std_msgs::Header toRosHeader(const ayanami::geometry_msgs::Header& in) {
 
 // ---- Pose / PoseStamped ----
 
-inline ayanami::geometry_msgs::PoseStamped fromRosPose(
-    const geometry_msgs::PoseStamped& in) {
+inline ayanami::geometry_msgs::PoseStamped fromRosPose(const geometry_msgs::PoseStamped& in) {
   ayanami::geometry_msgs::PoseStamped out;
   out.header = detail::fromRosHeader(in.header);
-  Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
-  iso.translation() = Eigen::Vector3d(in.pose.position.x, in.pose.position.y,
-                                      in.pose.position.z);
-  iso.linear() = Eigen::Quaterniond(in.pose.orientation.w,
-                                    in.pose.orientation.x, in.pose.orientation.y,
-                                    in.pose.orientation.z)
-                     .normalized()
-                     .toRotationMatrix();
-  out.pose = iso;
+  out.pose.position =
+      Eigen::Vector3d(in.pose.position.x, in.pose.position.y, in.pose.position.z);
+  out.pose.orientation =
+      Eigen::Quaterniond(in.pose.orientation.w, in.pose.orientation.x,
+                         in.pose.orientation.y, in.pose.orientation.z)
+          .normalized();
   return out;
 }
 
-inline geometry_msgs::PoseStamped toRosPose(
-    const ayanami::geometry_msgs::PoseStamped& in) {
+inline geometry_msgs::PoseStamped toRosPose(const ayanami::geometry_msgs::PoseStamped& in) {
   geometry_msgs::PoseStamped out;
   out.header = detail::toRosHeader(in.header);
-  const Eigen::Vector3d t = in.pose.translation();
-  out.pose.position.x = t.x();
-  out.pose.position.y = t.y();
-  out.pose.position.z = t.z();
-  const Eigen::Quaterniond q(in.pose.linear());
+  out.pose.position.x = in.pose.position.x();
+  out.pose.position.y = in.pose.position.y();
+  out.pose.position.z = in.pose.position.z();
+  const Eigen::Quaterniond q = in.pose.orientation.normalized();
   out.pose.orientation.x = q.x();
   out.pose.orientation.y = q.y();
   out.pose.orientation.z = q.z();
@@ -92,19 +84,15 @@ inline geometry_msgs::PoseStamped toRosPose(
 
 // ---- Twist / TwistStamped ----
 
-inline ayanami::geometry_msgs::TwistStamped fromRosTwist(
-    const geometry_msgs::TwistStamped& in) {
+inline ayanami::geometry_msgs::TwistStamped fromRosTwist(const geometry_msgs::TwistStamped& in) {
   ayanami::geometry_msgs::TwistStamped out;
   out.header = detail::fromRosHeader(in.header);
-  out.twist.linear = Eigen::Vector3d(in.twist.linear.x, in.twist.linear.y,
-                                     in.twist.linear.z);
-  out.twist.angular = Eigen::Vector3d(in.twist.angular.x, in.twist.angular.y,
-                                      in.twist.angular.z);
+  out.twist.linear = Eigen::Vector3d(in.twist.linear.x, in.twist.linear.y, in.twist.linear.z);
+  out.twist.angular = Eigen::Vector3d(in.twist.angular.x, in.twist.angular.y, in.twist.angular.z);
   return out;
 }
 
-inline geometry_msgs::TwistStamped toRosTwist(
-    const ayanami::geometry_msgs::TwistStamped& in) {
+inline geometry_msgs::TwistStamped toRosTwist(const ayanami::geometry_msgs::TwistStamped& in) {
   geometry_msgs::TwistStamped out;
   out.header = detail::toRosHeader(in.header);
   out.twist.linear.x = in.twist.linear.x();
@@ -130,30 +118,26 @@ inline nav_msgs::Path toRosPath(const ayanami::nav_msgs::Path& in) {
 
 // ---- OccupancyGrid ----
 
-inline nav_msgs::OccupancyGrid toRosOccupancyGrid(
-    const ayanami::nav_msgs::OccupancyGrid& in) {
+inline nav_msgs::OccupancyGrid toRosOccupancyGrid(const ayanami::nav_msgs::OccupancyGrid& in) {
   nav_msgs::OccupancyGrid out;
   out.header = detail::toRosHeader(in.header);
   out.info.resolution = in.info.resolution;
   out.info.width = in.info.width;
   out.info.height = in.info.height;
-  const Eigen::Vector3d origin_t = in.info.origin.translation();
-  out.info.origin.position.x = origin_t.x();
-  out.info.origin.position.y = origin_t.y();
-  out.info.origin.position.z = origin_t.z();
-  const Eigen::Quaterniond origin_q(in.info.origin.linear());
-  out.info.origin.orientation.x = origin_q.x();
-  out.info.origin.orientation.y = origin_q.y();
-  out.info.origin.orientation.z = origin_q.z();
-  out.info.origin.orientation.w = origin_q.w();
+  out.info.origin.position.x = in.info.origin.position.x();
+  out.info.origin.position.y = in.info.origin.position.y();
+  out.info.origin.position.z = in.info.origin.position.z();
+  out.info.origin.orientation.x = in.info.origin.orientation.x();
+  out.info.origin.orientation.y = in.info.origin.orientation.y();
+  out.info.origin.orientation.z = in.info.origin.orientation.z();
+  out.info.origin.orientation.w = in.info.origin.orientation.w();
   out.data.assign(in.data.begin(), in.data.end());
   return out;
 }
 
 // ---- PointCloud2 (PCL aware: 与传感器 data blob 对齐, 逐字段拷贝) ----
 
-inline ayanami::sensor_msgs::PointCloud2 fromRosPointCloud2(
-    const sensor_msgs::PointCloud2& in) {
+inline ayanami::sensor_msgs::PointCloud2 fromRosPointCloud2(const sensor_msgs::PointCloud2& in) {
   ayanami::sensor_msgs::PointCloud2 out;
   out.header = detail::fromRosHeader(in.header);
   out.height = in.height;
@@ -175,8 +159,7 @@ inline ayanami::sensor_msgs::PointCloud2 fromRosPointCloud2(
   return out;
 }
 
-inline sensor_msgs::PointCloud2 toRosPointCloud2(
-    const ayanami::sensor_msgs::PointCloud2& in) {
+inline sensor_msgs::PointCloud2 toRosPointCloud2(const ayanami::sensor_msgs::PointCloud2& in) {
   sensor_msgs::PointCloud2 out;
   out.header = detail::toRosHeader(in.header);
   out.height = in.height;
@@ -200,8 +183,7 @@ inline sensor_msgs::PointCloud2 toRosPointCloud2(
 
 // ---- LaserScan ----
 
-inline ayanami::sensor_msgs::LaserScan fromRosLaserScan(
-    const sensor_msgs::LaserScan& in) {
+inline ayanami::sensor_msgs::LaserScan fromRosLaserScan(const sensor_msgs::LaserScan& in) {
   ayanami::sensor_msgs::LaserScan out;
   out.header = detail::fromRosHeader(in.header);
   out.angle_min = in.angle_min;

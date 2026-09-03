@@ -43,15 +43,15 @@ const char* const g_config_dir = AYANAMI_TEST_CONFIG_DIR;
 const char* const g_assets_dir = AYANAMI_TEST_ASSETS_DIR;
 const char* const g_nav_demo_map_dir = NAV_DEMO_MAP_DIR;
 
-void init_config() {
+void initConfig() {
   setenv("AYANAMI_CONFIG_PATH", g_config_dir, 1);
   ayanami::GlobalConfig::instance(g_config_dir, /*override_path=*/true);
 }
 
 // 原始读 json 文件 (extension_modules / observation_sources 是数组, Config 无
 // vector<string> 实例化, 直接 nlohmann 解析)。
-nlohmann::json read_json(const char* config_name) {
-  std::ifstream ifs(ayanami::GlobalConfig::get_config_path(config_name));
+nlohmann::json readJson(const char* config_name) {
+  std::ifstream ifs(ayanami::GlobalConfig::getConfigPath(config_name));
   EXPECT_TRUE(ifs.good()) << "cannot open " << config_name;
   return nlohmann::json::parse(ifs, nullptr, false);
 }
@@ -59,7 +59,7 @@ nlohmann::json read_json(const char* config_name) {
 // 读 config_navigation 文件 (costmap 参数已并入其中)。
 nlohmann::json read_navigation_json() {
   std::ifstream ifs(
-      ayanami::GlobalConfig::get_config_path("config_navigation"));
+      ayanami::GlobalConfig::getConfigPath("config_navigation"));
   EXPECT_TRUE(ifs.good()) << "cannot open config_navigation";
   return nlohmann::json::parse(ifs, nullptr, false);
 }
@@ -74,10 +74,10 @@ bool pgm_loadable(const std::string& path) {
   return true;
 }
 
-TEST(ConfigSpecVerify, ConfigRosTopicsAndFrames) {
-  init_config();
+TEST(ConfigSpecVerify, configRosTopicsAndFrames) {
+  initConfig();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_ros"));
+      ayanami::GlobalConfig::getConfigPath("config_ros"));
   const std::string sec = "ayanami_ros";
 
   EXPECT_EQ(cfg.param<std::string>(sec, "pointcloud_topic", ""),
@@ -97,6 +97,30 @@ TEST(ConfigSpecVerify, ConfigRosTopicsAndFrames) {
             "/ayanami/local_costmap");
   EXPECT_EQ(cfg.param<std::string>(sec, "static_map_topic", ""),
             "/ayanami/map");
+  // rviz_viewer 输出桥接话题 (spec §4.5 扩展): 全部 ayanami 输出经全局回调
+  // 由 rviz_viewer 发布为 ROS 信息。
+  EXPECT_EQ(cfg.param<std::string>(sec, "planner_goal_topic", ""),
+            "/ayanami/planner/goal");
+  EXPECT_EQ(cfg.param<std::string>(sec, "planner_feedback_topic", ""),
+            "/ayanami/planner/feedback");
+  EXPECT_EQ(cfg.param<std::string>(sec, "smoother_input_path_topic", ""),
+            "/ayanami/smoother/input_path");
+  EXPECT_EQ(cfg.param<std::string>(sec, "smoother_feedback_topic", ""),
+            "/ayanami/smoother/feedback");
+  EXPECT_EQ(cfg.param<std::string>(sec, "controller_path_topic", ""),
+            "/ayanami/controller/path");
+  EXPECT_EQ(cfg.param<std::string>(sec, "controller_feedback_topic", ""),
+            "/ayanami/controller/feedback");
+  EXPECT_EQ(cfg.param<std::string>(sec, "controller_status_topic", ""),
+            "/ayanami/controller/status");
+  EXPECT_EQ(cfg.param<std::string>(sec, "recovery_goal_topic", ""),
+            "/ayanami/recovery/goal");
+  EXPECT_EQ(cfg.param<std::string>(sec, "recovery_feedback_topic", ""),
+            "/ayanami/recovery/feedback");
+  EXPECT_EQ(cfg.param<std::string>(sec, "recovery_status_topic", ""),
+            "/ayanami/recovery/status");
+  EXPECT_EQ(cfg.param<std::string>(sec, "robot_state_topic", ""),
+            "/ayanami/robot_state");
 
   EXPECT_EQ(cfg.param<std::string>(sec, "map_frame", ""), "map");
   EXPECT_EQ(cfg.param<std::string>(sec, "odom_frame", ""), "odom");
@@ -106,30 +130,30 @@ TEST(ConfigSpecVerify, ConfigRosTopicsAndFrames) {
 
   EXPECT_EQ(cfg.param<std::string>(sec, "navigation_so_name", ""),
             "libayanami_costmap_navigation.so");
-  EXPECT_EQ(cfg.param<std::string>(sec, "navigation_create_symbol", ""),
-            "create_navigation_module");
+  // 通用工厂: 不再有 navigation_create_symbol (requirement 2)。
+  EXPECT_FALSE(cfg.hasParam(sec, "navigation_create_symbol"));
 }
 
-TEST(ConfigSpecVerify, ExtensionModulesIncludeRvizViewer) {
-  init_config();
+TEST(ConfigSpecVerify, extensionModulesIncludeRvizViewer) {
+  initConfig();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_ros"));
+      ayanami::GlobalConfig::getConfigPath("config_ros"));
   const auto mods = cfg.param<std::vector<std::string>>(
       "ayanami_ros", "extension_modules", {});
   ASSERT_FALSE(mods.empty()) << "extension_modules 不能为空";
   bool found = false;
   for (const auto& m : mods) {
-    if (m == "librviz_viewer.so") {
+    if (m == "libayanami_rviz_viewer.so") {
       found = true;
     }
   }
-  EXPECT_TRUE(found) << "extension_modules 应含 librviz_viewer.so";
+  EXPECT_TRUE(found) << "extension_modules 应含 libayanami_rviz_viewer.so";
 }
 
-TEST(ConfigSpecVerify, TfSyncEdgesAreValidPairs) {
-  init_config();
+TEST(ConfigSpecVerify, tfSyncEdgesAreValidPairs) {
+  initConfig();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_ros"));
+      ayanami::GlobalConfig::getConfigPath("config_ros"));
   const auto edges = cfg.param<std::vector<std::vector<std::string>>>(
       "ayanami_ros", "tf_sync_edges", {});
   ASSERT_FALSE(edges.empty()) << "tf_sync_edges 不能为空";
@@ -140,10 +164,10 @@ TEST(ConfigSpecVerify, TfSyncEdgesAreValidPairs) {
   }
 }
 
-TEST(ConfigSpecVerify, TfStaticEdgesAreValidSyncEdges) {
-  init_config();
+TEST(ConfigSpecVerify, tfStaticEdgesAreValidSyncEdges) {
+  initConfig();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_ros"));
+      ayanami::GlobalConfig::getConfigPath("config_ros"));
   const auto sync = cfg.param<std::vector<std::vector<std::string>>>(
       "ayanami_ros", "tf_sync_edges", {});
   const auto statics = cfg.param<std::vector<std::vector<std::string>>>(
@@ -154,16 +178,16 @@ TEST(ConfigSpecVerify, TfStaticEdgesAreValidSyncEdges) {
   }
 }
 
-TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
-  init_config();
+TEST(ConfigSpecVerify, costmapGazeboAlignment) {
+  initConfig();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_navigation"));
+      ayanami::GlobalConfig::getConfigPath("config_navigation"));
 
   // Global spans the full nav_demo map; local remains a rolling window.
   EXPECT_FALSE(cfg.param<bool>("costmap_global", "rolling_window", true));
   EXPECT_TRUE(cfg.param<bool>("costmap_local", "rolling_window", false));
-  EXPECT_FALSE(cfg.has_param("costmap_global", "size_x"));
-  EXPECT_FALSE(cfg.has_param("costmap_global", "size_y"));
+  EXPECT_FALSE(cfg.hasParam("costmap_global", "size_x"));
+  EXPECT_FALSE(cfg.hasParam("costmap_global", "size_y"));
 
   // nav_demo/param 对齐: robot_radius=0.12 (圆形车体, inscribed fallback 0.12);
   // global inflation 0.5/csf 10.0; local inflation 0.2/csf 3.0。
@@ -188,8 +212,8 @@ TEST(ConfigSpecVerify, CostmapGazeboAlignment) {
       cfg.param<double>("costmap_local", "raytrace_range", -1.0), 3.5);
 }
 
-TEST(ConfigSpecVerify, CostmapObservationSourcesUseScan) {
-  init_config();
+TEST(ConfigSpecVerify, costmapObservationSourcesUseScan) {
+  initConfig();
   const auto doc = read_navigation_json();
   const auto& sources = doc.at("costmap_local").at("observation_sources");
   ASSERT_TRUE(sources.is_array());
@@ -206,12 +230,12 @@ TEST(ConfigSpecVerify, CostmapObservationSourcesUseScan) {
   EXPECT_TRUE(found) << "observation_sources 应含 Gazebo LaserScan (scan)";
 }
 
-TEST(ConfigSpecVerify, RobotFrameSingleSource) {
-  init_config();
+TEST(ConfigSpecVerify, robotFrameSingleSource) {
+  initConfig();
   ayanami::Config nav(
-      ayanami::GlobalConfig::get_config_path("config_navigation"));
+      ayanami::GlobalConfig::getConfigPath("config_navigation"));
   ayanami::Config ros(
-      ayanami::GlobalConfig::get_config_path("config_ros"));
+      ayanami::GlobalConfig::getConfigPath("config_ros"));
   const std::string nav_frame =
       nav.param<std::string>("navigation", "robot_frame", "");
   const std::string ros_frame =
@@ -221,20 +245,35 @@ TEST(ConfigSpecVerify, RobotFrameSingleSource) {
   EXPECT_EQ(nav_frame, ros_frame);
 }
 
-TEST(ConfigSpecVerify, NavigationIdsKeepFullPluginNames) {
-  init_config();
+TEST(ConfigSpecVerify, navigationIdsKeepFullPluginNames) {
+  initConfig();
   // Ruling #8: 插件 id == 插件 full name (含 _recovery 后缀), 不破。
-  // id 统一从各组件 config_* json 的 name 字段读取 (recovery 按 role 分组)。
+  // id 统一从主 config.json global 单层索引的组件 json 的 name 字段读取
+  // (recovery 按 role 分组)。
   auto component_name = [](const std::string& key,
                            const std::string& section) {
     ayanami::Config cfg(
-        ayanami::GlobalConfig::get_config_path("config_navigation", key));
+        ayanami::GlobalConfig::getConfigPath(key));
     return cfg.param<std::string>(section, "name", "");
   };
   auto recovery_name_by_role = [](const std::string& role) {
-    for (const auto& path : ayanami::GlobalConfig::get_config_paths(
-             "config_navigation", "config_recovery")) {
-      ayanami::Config cfg(path);
+    const ayanami::GlobalConfig* g = ayanami::GlobalConfig::instance();
+    std::vector<std::string> entries;
+    try {
+      entries = g->param<std::vector<std::string>>("global", "config_recovery",
+                                                   {});
+    } catch (const std::exception&) {
+      const std::string single =
+          g->param<std::string>("global", "config_recovery", "");
+      if (!single.empty()) {
+        entries.push_back(single);
+      }
+    }
+    const std::string directory =
+        g->param<std::string>("global", "config_path", ".");
+    for (const auto& entry : entries) {
+      const std::filesystem::path p(entry);
+      ayanami::Config cfg(p.is_absolute() ? entry : (directory + "/" + entry));
       if (cfg.param<std::string>("recovery", "role", "") == role) {
         return cfg.param<std::string>("recovery", "name", "");
       }
@@ -246,7 +285,7 @@ TEST(ConfigSpecVerify, NavigationIdsKeepFullPluginNames) {
   EXPECT_EQ(component_name("config_smoother", "smoother"),
             "costmap_savitzky");
   EXPECT_EQ(component_name("config_controller", "controller"),
-            "costmap_pid");
+            "dwb_local");
   EXPECT_EQ(recovery_name_by_role("spin"), "costmap_spin_recovery");
   EXPECT_EQ(recovery_name_by_role("wait"), "costmap_wait_recovery");
   EXPECT_EQ(recovery_name_by_role("backup"), "costmap_back_up_recovery");
@@ -254,10 +293,10 @@ TEST(ConfigSpecVerify, NavigationIdsKeepFullPluginNames) {
             "costmap_clear_costmap_recovery");
 }
 
-TEST(ConfigSpecVerify, StaticMapLoadsAndNavDemoCompat) {
-  init_config();
+TEST(ConfigSpecVerify, staticMapLoadsAndNavDemoCompat) {
+  initConfig();
   ayanami::Config cfg(
-      ayanami::GlobalConfig::get_config_path("config_navigation"));
+      ayanami::GlobalConfig::getConfigPath("config_navigation"));
   const std::string static_map =
       cfg.param<std::string>("costmap_global", "static_map", "");
   ASSERT_FALSE(static_map.empty());
@@ -278,7 +317,7 @@ TEST(ConfigSpecVerify, StaticMapLoadsAndNavDemoCompat) {
   }
 }
 
-TEST(ConfigSpecVerify, AyanamiConfigurationContainsNoYaml) {
+TEST(ConfigSpecVerify, ayanamiConfigurationContainsNoYaml) {
   const std::filesystem::path config_dir(AYANAMI_TEST_CONFIG_DIR);
   const std::filesystem::path assets_dir(AYANAMI_TEST_ASSETS_DIR);
   for (const auto& root : {config_dir, assets_dir}) {
