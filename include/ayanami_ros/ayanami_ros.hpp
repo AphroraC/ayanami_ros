@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -98,6 +99,14 @@ private:
   std::optional<ayanami::geometry_msgs::PoseStamped> pending_goal;
   std::mutex tf_edge_mutex;
   std::map<std::pair<std::string, std::string>, bool> tf_edge_static;
+  // TF 缺边诊断 (50Hz loop 维护): 边首次失败时间 + 上次诊断输出时间。
+  // 传感器回调路径不阻塞 (timeout=0), 诊断只由 loop 的低频路径输出。
+  std::map<std::pair<std::string, std::string>,
+           std::chrono::steady_clock::time_point>
+      tf_missing_since;
+  std::map<std::pair<std::string, std::string>,
+           std::chrono::steady_clock::time_point>
+      tf_diag_logged_at;
   std::set<std::pair<std::string, std::string>> configured_static_edges;
   double tf_sync_rate = 50.0;
 

@@ -216,7 +216,9 @@ bool AyanamiROS::hasPendingGoal() const {
 void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
   // Task 8: ros_msg_converter 统一转换 (spec §4.3)。
   // Populate the core TF buffer at the observation time before converting.
-  syncTransformsToCore(msg->header.stamp, 0.05);
+  // timeout=0: 只同步当前已可用的边, TF 生产者短暂缺席时回调不阻塞
+  // (持续缺失由 50Hz loop 的诊断输出, 不在这里等)。
+  syncTransformsToCore(msg->header.stamp, 0.0);
   if (!navigation_plugin) {
     return;
   }
@@ -226,7 +228,7 @@ void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& ms
 }
 
 void AyanamiROS::laserscanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
-  syncTransformsToCore(msg->header.stamp, 0.05);
+  syncTransformsToCore(msg->header.stamp, 0.0);
   if (!navigation_plugin) {
     return;
   }
@@ -261,11 +263,16 @@ void AyanamiROS::syncTransformsToCore() {
 
 void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
   auto& robot_state_controller = ayanami::components::RobotStateController::instance();
+  const auto now = std::chrono::steady_clock::now();
   for (const auto& edge : tf_listener.tfSyncEdges()) {
     const std::string& target = edge.first;
     const std::string& source = edge.second;
     geometry_msgs::TransformStamped tf_msg;
     if (tf_listener.lookupTransform(target, source, stamp, tf_msg, timeout)) {
+      {
+        std::lock_guard<std::mutex> lock(tf_edge_mutex);
+        tf_missing_since.erase(std::make_pair(target, source));
+      }
       // TF2 returns stamp=0 for a static edge queried as latest, but echoes a
       // concrete query time for the same static edge. fast_tf forbids changing
       // a link between static and dynamic, so classify each configured edge
@@ -280,6 +287,34 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
       }
       const auto core_stamp = is_static ? ayanami::Timestamp::latest() : detail::fromRosTime(tf_msg.header.stamp);
       robot_state_controller.setTransform(target, source, core_stamp, tf2::transformToEigen(tf_msg), is_static);
+    } else {
+      // 持续缺边诊断 (只由 loop 的低频路径输出; 传感器回调 timeout=0 只快速
+      // 探活, 不在这里阻塞)。边连续 ≥2s 不可用且距上次诊断 ≥5s 时提示一次,
+      // 并给出最常见的环境根因 (多个仿真实例并发发布同名 TF / 发布者缺席)。
+      const auto key = std::make_pair(target, source);
+      bool need_diag = false;
+      {
+        std::lock_guard<std::mutex> lock(tf_edge_mutex);
+        const auto first = tf_missing_since.emplace(key, now);
+        const auto diag_at = tf_diag_logged_at.find(key);
+        if (!first.second) {
+          need_diag =
+              now - first.first->second > std::chrono::seconds(2) &&
+              (diag_at == tf_diag_logged_at.end() ||
+               now - diag_at->second > std::chrono::seconds(5));
+        }
+        if (need_diag) {
+          tf_diag_logged_at[key] = now;
+        }
+      }
+      if (need_diag) {
+        spdlog::warn(
+            "TF 同步缺边 {} <- {} 持续 ≥2s: 障碍落图与机器人位姿将异常。"
+            "检查 gazebo 差速 (odom->base_footprint)、AMCL (map->odom)、"
+            "robot_state_publisher 是否存活; 若曾多次 roslaunch, 残留的多个"
+            "仿真实例会同时发布同名 TF 造成帧缺失/乱序",
+            target, source);
+      }
     }
   }
 }
