@@ -215,10 +215,11 @@ bool AyanamiROS::hasPendingGoal() const {
 
 void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
   // Task 8: ros_msg_converter 统一转换 (spec §4.3)。
-  // Populate the core TF buffer at the observation time before converting.
-  // timeout=0: 只同步当前已可用的边, TF 生产者短暂缺席时回调不阻塞
-  // (持续缺失由 50Hz loop 的诊断输出, 不在这里等)。
-  syncTransformsToCore(msg->header.stamp, 0.0);
+  // Populate the core TF buffer before converting. 用 latest (Time(0)) 而
+  // 非传感器戳: 快于实时的仿真下传感器戳恒晚于 loop 已同步样本, fast_tf
+  // 无外推, 精确戳同步/查询会失败。latest 语义与障碍落图查询完全同源。
+  // timeout=0: 只同步当前已可用的边, TF 生产者短暂缺席时回调不阻塞。
+  syncTransformsToCore(ros::Time(0), 0.0);
   if (!navigation_plugin) {
     return;
   }
@@ -228,7 +229,7 @@ void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& ms
 }
 
 void AyanamiROS::laserscanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
-  syncTransformsToCore(msg->header.stamp, 0.0);
+  syncTransformsToCore(ros::Time(0), 0.0);
   if (!navigation_plugin) {
     return;
   }
