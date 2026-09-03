@@ -34,6 +34,25 @@ bool TF2Listener::lookupTransform(
   }
 }
 
+bool TF2Listener::canTransform(const std::string& target,
+                              const std::string& source,
+                              double timeout) const {
+  try {
+    return buffer.canTransform(target, source, ros::Time(0),
+                               ros::Duration(timeout));
+  } catch (const tf2::TransformException&) {
+    return false;
+  }
+}
+
+std::string TF2Listener::framesAsString() const {
+  try {
+    return buffer.allFramesAsString();
+  } catch (const std::exception& e) {
+    return std::string("(frames unavailable: ") + e.what() + ")";
+  }
+}
+
 bool TF2Listener::lookupTransform(
   const std::string& target,
   const std::string& source,

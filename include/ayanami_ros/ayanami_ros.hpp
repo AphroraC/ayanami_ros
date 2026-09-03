@@ -76,6 +76,9 @@ private:
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void syncTransformsToCore();
   void syncTransformsToCore(const ros::Time& stamp, double timeout);
+  /// @brief ROS TF 树健康诊断 (loop 低频调用): 检查 tf_sync_edges 各边在 ROS
+  /// 侧是否可解析; 缺失时输出一次带完整帧树的警告 (定位环境/残留实例问题)。
+  void checkTfHealth();
   void loop();
 
 private:
@@ -107,6 +110,9 @@ private:
   std::map<std::pair<std::string, std::string>,
            std::chrono::steady_clock::time_point>
       tf_diag_logged_at;
+  // TF 健康诊断状态 (checkTfHealth 使用)。
+  bool tf_health_was_bad{false};
+  std::chrono::steady_clock::time_point tf_health_last_log{};
   std::set<std::pair<std::string, std::string>> configured_static_edges;
   double tf_sync_rate = 50.0;
 

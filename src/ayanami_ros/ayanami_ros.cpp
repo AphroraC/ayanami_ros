@@ -319,12 +319,54 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
   }
 }
 
+void AyanamiROS::checkTfHealth() {
+  // 低频健康诊断: 每条 sync 边在 ROS TF 侧是否可解析; 持续缺失时每 5s
+  // 输出一次 (附完整帧树), 恢复后输出一次 info。用于把"ROS 侧 TF 树缺帧"
+  // 与"核心侧查询失败"区分开 —— 缺边时直接打印帧树, 一眼定位是哪个生产者
+  // 缺席或残留多实例争抢。
+  const auto now = std::chrono::steady_clock::now();
+  std::string missing_edges;
+  for (const auto& edge : tf_listener.tfSyncEdges()) {
+    const std::string& target = edge.first;
+    const std::string& source = edge.second;
+    if (!tf_listener.canTransform(target, source, 0.0)) {
+      if (!missing_edges.empty()) missing_edges += ", ";
+      missing_edges += target + "<-" + source;
+    }
+  }
+  if (missing_edges.empty()) {
+    if (tf_health_was_bad) {
+      spdlog::info("TF 健康诊断: 全部 {} 条同步边已恢复可用",
+                   tf_listener.tfSyncEdges().size());
+      tf_health_was_bad = false;
+    }
+    return;
+  }
+  const bool due = (now - tf_health_last_log) > std::chrono::seconds(5);
+  if (due) {
+    tf_health_last_log = now;
+    tf_health_was_bad = true;
+    spdlog::warn(
+        "ROS TF 健康诊断: 边不可用 [{}]。当前帧树:\n{}\n"
+        "若 odom<-base_footprint 缺失: 检查 gazebo 差速插件 (libgazebo_ros_"
+        "diff_drive, publishOdomTF) 是否随模型加载; 若 map<-odom 缺失: 等待/"
+        "检查 AMCL 定位; 多个仿真实例残留会同时发布同名 TF 造成帧缺失与乱序",
+        missing_edges, tf_listener.framesAsString());
+  }
+}
+
 void AyanamiROS::loop() {
   const double rate_hz = tf_sync_rate > 0.0 ? tf_sync_rate : 50.0;
   ros::WallRate rate(rate_hz);
   spdlog::info("AyanamiROS loop started rate={:.1f}Hz", rate_hz);
+  auto last_tf_health = std::chrono::steady_clock::time_point{};
   while (ros::ok() && !kill_switch.load()) {
     syncTransformsToCore();
+    if (std::chrono::steady_clock::now() - last_tf_health >
+        std::chrono::seconds(1)) {
+      checkTfHealth();
+      last_tf_health = std::chrono::steady_clock::now();
+    }
     if (navigation_plugin) {
       navigation_plugin->spinOnce();
     }

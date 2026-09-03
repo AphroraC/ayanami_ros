@@ -53,6 +53,14 @@ public:
     return tf_sync_edges;
   }
 
+  /// @brief ROS TF 树健康诊断 (缺边排障): 边 (target←source) 当前是否可解析。
+  bool canTransform(const std::string& target, const std::string& source,
+                    double timeout = 0.0) const;
+
+  /// @brief ROS TF 树中现有帧列表 (含父子关系), 格式:
+  /// "Frame base_link exists with parent base_footprint"。
+  std::string framesAsString() const;
+
 private:
   tf2_ros::Buffer buffer;
   std::unique_ptr<tf2_ros::TransformListener> listener;
