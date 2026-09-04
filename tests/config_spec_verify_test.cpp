@@ -248,7 +248,7 @@ TEST(ConfigSpecVerify, robotFrameSingleSource) {
 TEST(ConfigSpecVerify, navigationIdsKeepFullPluginNames) {
   initConfig();
   // Ruling #8: 插件 id == 插件 full name (含 _recovery 后缀), 不破。
-  // id 统一从主 config.json global 单层索引的组件 json 的 name 字段读取
+  // id 统一从 navigation 段 config_* 指向的组件 json 的 name 字段读取
   // (recovery 按 role 分组)。
   auto component_name = [](const std::string& key,
                            const std::string& section) {
@@ -257,20 +257,23 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullPluginNames) {
     return cfg.param<std::string>(section, "name", "");
   };
   auto recovery_name_by_role = [](const std::string& role) {
-    const ayanami::GlobalConfig* g = ayanami::GlobalConfig::instance();
+    // config_recovery 有序列表在 config_navigation 的 navigation 段。
+    ayanami::Config nav(
+        ayanami::GlobalConfig::getConfigPath("config_navigation"));
     std::vector<std::string> entries;
     try {
-      entries = g->param<std::vector<std::string>>("global", "config_recovery",
-                                                   {});
+      entries = nav.param<std::vector<std::string>>(
+          "navigation", "config_recovery", {});
     } catch (const std::exception&) {
       const std::string single =
-          g->param<std::string>("global", "config_recovery", "");
+          nav.param<std::string>("navigation", "config_recovery", "");
       if (!single.empty()) {
         entries.push_back(single);
       }
     }
     const std::string directory =
-        g->param<std::string>("global", "config_path", ".");
+        ayanami::GlobalConfig::instance()->param<std::string>(
+            "global", "config_path", ".");
     for (const auto& entry : entries) {
       const std::filesystem::path p(entry);
       ayanami::Config cfg(p.is_absolute() ? entry : (directory + "/" + entry));
@@ -281,11 +284,12 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullPluginNames) {
     return std::string("");
   };
 
-  EXPECT_EQ(component_name("config_planner", "planner"), "costmap_smac");
+  EXPECT_EQ(component_name("config_planner", "planner"),
+            "costmap_smac_planner");
   EXPECT_EQ(component_name("config_smoother", "smoother"),
-            "costmap_savitzky");
+            "costmap_savitzky_smoother");
   EXPECT_EQ(component_name("config_controller", "controller"),
-            "dwb_local");
+            "costmap_dwb_controller");
   EXPECT_EQ(recovery_name_by_role("spin"), "costmap_spin_recovery");
   EXPECT_EQ(recovery_name_by_role("wait"), "costmap_wait_recovery");
   EXPECT_EQ(recovery_name_by_role("backup"), "costmap_back_up_recovery");

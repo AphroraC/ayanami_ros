@@ -359,7 +359,7 @@ private:
     std_msgs::String msg;
     std::ostringstream oss;
     oss << "status=" << goalStatusName(result.status)
-        << " failure=" << failureCodeName(result.result.failure)
+        << " failure=" << failureCodeName(result.result.error)
         << " reached=" << (result.result.reached ? "true" : "false")
         << " session=" << result.result.session_id
         << " plan=" << result.result.plan_version;
@@ -402,7 +402,7 @@ private:
     std::ostringstream oss;
     oss << "recovery=" << recovery_id << " status="
         << goalStatusName(result.status)
-        << " failure=" << failureCodeName(result.result.failure)
+        << " failure=" << failureCodeName(result.result.error)
         << " session=" << result.result.session_id
         << " plan=" << result.result.plan_version;
     if (!result.result.message.empty()) {
