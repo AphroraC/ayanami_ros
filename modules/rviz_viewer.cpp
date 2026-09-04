@@ -201,75 +201,75 @@ private:
 
   void registerCallbacks() {
     cb_get_path_goal =
-        ayanami::interfaces::NavigationCallbacks::on_get_path_goal.add(
+        ayanami::interfaces::NavigationCallbacks::on_get_path_goal.subscribe(
             [this](const ayanami::actions::GetPathGoal& goal) {
               publishPlannerGoal(goal);
             });
     cb_get_path_feedback =
-        ayanami::interfaces::NavigationCallbacks::on_get_path_feedback.add(
+        ayanami::interfaces::NavigationCallbacks::on_get_path_feedback.subscribe(
             [this](const ayanami::actions::GetPathFeedback& feedback) {
               publishPlannerFeedback(feedback);
             });
     cb_get_path =
-        ayanami::interfaces::NavigationCallbacks::on_get_path_result.add(
+        ayanami::interfaces::NavigationCallbacks::on_get_path_result.subscribe(
             [this](
                 const ayanami::actions::GoalResult<ayanami::actions::GetPathResult>&
                     result) { publishPlannerPath(result); });
     cb_smooth_goal =
-        ayanami::interfaces::NavigationCallbacks::on_smooth_path_goal.add(
+        ayanami::interfaces::NavigationCallbacks::on_smooth_path_goal.subscribe(
             [this](const ayanami::actions::SmoothPathGoal& goal) {
               publishSmootherGoal(goal);
             });
     cb_smooth_feedback =
-        ayanami::interfaces::NavigationCallbacks::on_smooth_path_feedback.add(
+        ayanami::interfaces::NavigationCallbacks::on_smooth_path_feedback.subscribe(
             [this](const ayanami::actions::SmoothPathFeedback& feedback) {
               publishSmootherFeedback(feedback);
             });
     cb_smooth_path =
-        ayanami::interfaces::NavigationCallbacks::on_smooth_path_result.add(
+        ayanami::interfaces::NavigationCallbacks::on_smooth_path_result.subscribe(
             [this](const ayanami::actions::GoalResult<
                        ayanami::actions::SmoothPathResult>& result) {
               publishSmootherPath(result);
             });
     cb_exe_goal =
-        ayanami::interfaces::NavigationCallbacks::on_exe_path_goal.add(
+        ayanami::interfaces::NavigationCallbacks::on_exe_path_goal.subscribe(
             [this](const ayanami::actions::ExePathGoal& goal) {
               publishExePathGoal(goal);
             });
     cb_exe_feedback =
-        ayanami::interfaces::NavigationCallbacks::on_exe_path_feedback.add(
+        ayanami::interfaces::NavigationCallbacks::on_exe_path_feedback.subscribe(
             [this](const ayanami::actions::ExePathFeedback& feedback) {
               publishExePathFeedback(feedback);
             });
     cb_exe_result =
-        ayanami::interfaces::NavigationCallbacks::on_exe_path_result.add(
+        ayanami::interfaces::NavigationCallbacks::on_exe_path_result.subscribe(
             [this](const ayanami::actions::GoalResult<
                        ayanami::actions::ExePathResult>& result) {
               publishExePathResult(result);
             });
     cb_recovery_goal =
-        ayanami::interfaces::NavigationCallbacks::on_recovery_goal.add(
+        ayanami::interfaces::NavigationCallbacks::on_recovery_goal.subscribe(
             [this](const ayanami::actions::RecoveryGoal& goal) {
               publishRecoveryGoal(goal);
             });
     cb_recovery_feedback =
-        ayanami::interfaces::NavigationCallbacks::on_recovery_feedback.add(
+        ayanami::interfaces::NavigationCallbacks::on_recovery_feedback.subscribe(
             [this](const ayanami::actions::RecoveryFeedback& feedback) {
               publishRecoveryFeedback(feedback);
             });
     cb_recovery_result =
-        ayanami::interfaces::NavigationCallbacks::on_recovery_result.add(
+        ayanami::interfaces::NavigationCallbacks::on_recovery_result.subscribe(
             [this](const ayanami::actions::GoalResult<
                        ayanami::actions::RecoveryResult>& result) {
               publishRecoveryResult(result);
             });
     cb_velocity_cmd =
-        ayanami::interfaces::NavigationCallbacks::on_velocity_command.add(
+        ayanami::interfaces::NavigationCallbacks::on_velocity_command.subscribe(
             [this](const ayanami::geometry_msgs::TwistStamped& velocity) {
               publishVelocityCommand(velocity);
             });
     cb_costmap_viz =
-        ayanami::interfaces::NavigationCallbacks::on_costmap_visualization.add(
+        ayanami::interfaces::NavigationCallbacks::on_costmap_visualization.subscribe(
             [this](const std::string& name,
                    const ayanami::nav_msgs::OccupancyGrid& map) {
               publishCostmap(name, map);
@@ -277,40 +277,20 @@ private:
   }
 
   void unregisterCallbacks() {
-    auto remove_if = [](auto& id, auto& slot) {
-      if (id >= 0) {
-        slot.remove(id);
-        id = -1;
-      }
-    };
-    remove_if(cb_get_path_goal,
-              ayanami::interfaces::NavigationCallbacks::on_get_path_goal);
-    remove_if(cb_get_path_feedback,
-              ayanami::interfaces::NavigationCallbacks::on_get_path_feedback);
-    remove_if(cb_get_path,
-              ayanami::interfaces::NavigationCallbacks::on_get_path_result);
-    remove_if(cb_smooth_goal,
-              ayanami::interfaces::NavigationCallbacks::on_smooth_path_goal);
-    remove_if(cb_smooth_feedback,
-              ayanami::interfaces::NavigationCallbacks::on_smooth_path_feedback);
-    remove_if(cb_smooth_path,
-              ayanami::interfaces::NavigationCallbacks::on_smooth_path_result);
-    remove_if(cb_exe_goal,
-              ayanami::interfaces::NavigationCallbacks::on_exe_path_goal);
-    remove_if(cb_exe_feedback,
-              ayanami::interfaces::NavigationCallbacks::on_exe_path_feedback);
-    remove_if(cb_exe_result,
-              ayanami::interfaces::NavigationCallbacks::on_exe_path_result);
-    remove_if(cb_recovery_goal,
-              ayanami::interfaces::NavigationCallbacks::on_recovery_goal);
-    remove_if(cb_recovery_feedback,
-              ayanami::interfaces::NavigationCallbacks::on_recovery_feedback);
-    remove_if(cb_recovery_result,
-              ayanami::interfaces::NavigationCallbacks::on_recovery_result);
-    remove_if(cb_velocity_cmd,
-              ayanami::interfaces::NavigationCallbacks::on_velocity_command);
-    remove_if(cb_costmap_viz,
-              ayanami::interfaces::NavigationCallbacks::on_costmap_visualization);
+    cb_get_path_goal.reset();
+    cb_get_path_feedback.reset();
+    cb_get_path.reset();
+    cb_smooth_goal.reset();
+    cb_smooth_feedback.reset();
+    cb_smooth_path.reset();
+    cb_exe_goal.reset();
+    cb_exe_feedback.reset();
+    cb_exe_result.reset();
+    cb_recovery_goal.reset();
+    cb_recovery_feedback.reset();
+    cb_recovery_result.reset();
+    cb_velocity_cmd.reset();
+    cb_costmap_viz.reset();
   }
 
   void publishPlannerGoal(const ayanami::actions::GetPathGoal& goal) {
@@ -498,11 +478,10 @@ private:
   std::string odom_frame = "odom";
   std::mutex last_recovery_mutex;
   std::string last_recovery_id;
-  int cb_costmap_viz = -1, cb_get_path = -1, cb_smooth_path = -1,
-      cb_velocity_cmd = -1, cb_get_path_goal = -1, cb_get_path_feedback = -1,
-      cb_smooth_goal = -1, cb_smooth_feedback = -1, cb_exe_goal = -1,
-      cb_exe_feedback = -1, cb_exe_result = -1, cb_recovery_goal = -1,
-      cb_recovery_feedback = -1, cb_recovery_result = -1;
+  ayanami::CallbackSubscription cb_costmap_viz, cb_get_path, cb_smooth_path,
+      cb_velocity_cmd, cb_get_path_goal, cb_get_path_feedback, cb_smooth_goal,
+      cb_smooth_feedback, cb_exe_goal, cb_exe_feedback, cb_exe_result,
+      cb_recovery_goal, cb_recovery_feedback, cb_recovery_result;
 };
 
 }  // namespace ayanami_ros
