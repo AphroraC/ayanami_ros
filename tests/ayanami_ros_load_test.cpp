@@ -342,7 +342,7 @@ TEST(AyanamiROS, odomVelocityWiredIntoRobotStateController) {
   twist.header.frame_id = "base_footprint";
   twist.twist.linear.x() = 0.5;
   twist.twist.angular.z() = 0.25;
-  node.updateOdomVelocity(twist);
+  node.setOdometry(twist);
 
   EXPECT_TRUE(rsc.hasFreshVelocity());
   const auto v = rsc.getRobotVelocity();

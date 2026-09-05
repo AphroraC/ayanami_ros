@@ -252,8 +252,17 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullPluginNames) {
   // (recovery 按 role 分组)。
   auto component_name = [](const std::string& key,
                            const std::string& section) {
-    ayanami::Config cfg(
-        ayanami::GlobalConfig::getConfigPath(key));
+    // config_{planner,smoother,controller} 是 config_navigation 的 navigation
+    // 段内的单文件相对路径 (config 重组后不再占用 config.json global 键)。
+    ayanami::Config nav(
+        ayanami::GlobalConfig::getConfigPath("config_navigation"));
+    const std::string entry = nav.param<std::string>("navigation", key, "");
+    EXPECT_FALSE(entry.empty()) << "navigation." << key << " missing";
+    const std::filesystem::path p(entry);
+    const std::string directory =
+        ayanami::GlobalConfig::instance()->param<std::string>(
+            "global", "config_path", ".");
+    ayanami::Config cfg(p.is_absolute() ? entry : (directory + "/" + entry));
     return cfg.param<std::string>(section, "name", "");
   };
   auto recovery_name_by_role = [](const std::string& role) {

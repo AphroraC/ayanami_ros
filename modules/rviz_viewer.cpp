@@ -44,23 +44,23 @@ std::string g_planner_path_topic;
 
 const char* failureCodeName(ayanami::FailureCode code) {
   switch (code) {
-    case ayanami::FailureCode::None: return "None";
-    case ayanami::FailureCode::Canceled: return "Canceled";
-    case ayanami::FailureCode::Timeout: return "Timeout";
-    case ayanami::FailureCode::InvalidInput: return "InvalidInput";
-    case ayanami::FailureCode::TransformUnavailable: return "TransformUnavailable";
-    case ayanami::FailureCode::MapUnavailable: return "MapUnavailable";
-    case ayanami::FailureCode::MapStale: return "MapStale";
-    case ayanami::FailureCode::StartInvalid: return "StartInvalid";
-    case ayanami::FailureCode::GoalInvalid: return "GoalInvalid";
-    case ayanami::FailureCode::PathNotFound: return "PathNotFound";
-    case ayanami::FailureCode::PathInvalid: return "PathInvalid";
-    case ayanami::FailureCode::SmoothingFailed: return "SmoothingFailed";
-    case ayanami::FailureCode::NoValidCommand: return "NoValidCommand";
-    case ayanami::FailureCode::NoProgress: return "NoProgress";
-    case ayanami::FailureCode::GoalNotReached: return "GoalNotReached";
-    case ayanami::FailureCode::RecoveryFailed: return "RecoveryFailed";
-    case ayanami::FailureCode::InternalError: return "InternalError";
+    case ayanami::FailureCode::NONE: return "None";
+    case ayanami::FailureCode::CANCELED: return "Canceled";
+    case ayanami::FailureCode::TIMEOUT: return "Timeout";
+    case ayanami::FailureCode::INVALID_INPUT: return "InvalidInput";
+    case ayanami::FailureCode::TRANSFORM_UNAVAILABLE: return "TransformUnavailable";
+    case ayanami::FailureCode::MAP_UNAVAILABLE: return "MapUnavailable";
+    case ayanami::FailureCode::MAP_STALE: return "MapStale";
+    case ayanami::FailureCode::START_INVALID: return "StartInvalid";
+    case ayanami::FailureCode::GOAL_INVALID: return "GoalInvalid";
+    case ayanami::FailureCode::PATH_NOT_FOUND: return "PathNotFound";
+    case ayanami::FailureCode::PATH_INVALID: return "PathInvalid";
+    case ayanami::FailureCode::SMOOTHING_FAILED: return "SmoothingFailed";
+    case ayanami::FailureCode::NO_VALID_COMMAND: return "NoValidCommand";
+    case ayanami::FailureCode::NO_PROGRESS: return "NoProgress";
+    case ayanami::FailureCode::GOAL_NOT_REACHED: return "GoalNotReached";
+    case ayanami::FailureCode::RECOVERY_FAILED: return "RecoveryFailed";
+    case ayanami::FailureCode::INTERNAL_ERROR: return "InternalError";
   }
   return "Unknown";
 }
@@ -149,8 +149,6 @@ private:
     recovery_status_topic =
         config_ros.param<std::string>(sec, "recovery_status_topic",
                                       "/ayanami/recovery/status");
-    map_frame = config_ros.param<std::string>(sec, "map_frame", "map");
-    odom_frame = config_ros.param<std::string>(sec, "odom_frame", "odom");
     g_planner_path_topic = planner_path_topic;
   }
 
@@ -435,13 +433,10 @@ private:
 
   void publishCostmap(const std::string& name,
                       const ayanami::nav_msgs::OccupancyGrid& map) {
+    // 帧单一来源: 核心 publishMapsForVisualization 恒以 wrapper 帧
+    // (costmap.global_frame / costmap.local_frame) 填充 frame_id, 此处不再
+    // 用 config_ros 的 map_frame/odom_frame 兜底 (避免双源分叉)。
     nav_msgs::OccupancyGrid grid = toRosOccupancyGrid(map);
-    if (grid.header.frame_id.empty()) {
-      grid.header.frame_id =
-          name == "local_costmap"
-              ? (odom_frame.empty() ? "odom" : odom_frame)
-              : (map_frame.empty() ? "map" : map_frame);
-    }
     if (name == "local_costmap") {
       g_local_costmap_pub_count.fetch_add(1);
       local_costmap_pub.publish(grid);
@@ -474,8 +469,6 @@ private:
   std::string recovery_goal_topic = "/ayanami/recovery/goal";
   std::string recovery_feedback_topic = "/ayanami/recovery/feedback";
   std::string recovery_status_topic = "/ayanami/recovery/status";
-  std::string map_frame = "map";
-  std::string odom_frame = "odom";
   std::mutex last_recovery_mutex;
   std::string last_recovery_id;
   ayanami::CallbackSubscription cb_costmap_viz, cb_get_path, cb_smooth_path,

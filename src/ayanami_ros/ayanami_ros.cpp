@@ -1,5 +1,6 @@
 #include <ayanami_ros/ayanami_ros.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -90,6 +91,10 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   odom_frame = config_ros.param<std::string>("ayanami_ros", "odom_frame", "odom");
   robot_frame = config_ros.param<std::string>("ayanami_ros", "robot_frame", "base_footprint");
   tf_sync_rate = config_ros.param<double>("ayanami_ros", "tf_sync_rate", 50.0);
+  localization_clear_yaw_threshold = config_ros.param<double>(
+      "ayanami_ros", "localization_clear_yaw_threshold", 1.0);
+  localization_clear_pos_threshold = config_ros.param<double>(
+      "ayanami_ros", "localization_clear_pos_threshold", 2.0);
   navigation_so_name = config_ros.param<std::string>("ayanami_ros", "navigation_so_name", navigation_so_name);
 
   // 顺序关键 (M2-P1): 扩展必须先于 navigation_plugin->start() 注册其
@@ -213,8 +218,22 @@ bool AyanamiROS::hasPendingGoal() const {
   return pending_goal.has_value();
 }
 
-void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
-  // Task 8: ros_msg_converter 统一转换 (spec §4.3)。
+void AyanamiROS::setTransform(const std::string& parent,
+                              const std::string& child,
+                              ayanami::Timestamp stamp,
+                              const Eigen::Isometry3d& transform,
+                              bool is_static) {
+  ayanami::components::RobotStateController::instance().setTransform(
+      parent, child, std::move(stamp), transform, is_static);
+}
+
+void AyanamiROS::setOdometry(const ayanami::geometry_msgs::TwistStamped& twist) {
+  // 直写核心 RobotStateController (核心 controller execution 读取最新速度;
+  // 位姿仍由核心侧经 TF 查询)。
+  ayanami::components::RobotStateController::instance().setOdometry(twist);
+}
+
+void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
   // Populate the core TF buffer before converting. 用 latest (Time(0)) 而
   // 非传感器戳: 快于实时的仿真下传感器戳恒晚于 loop 已同步样本, fast_tf
   // 无外推, 精确戳同步/查询会失败。latest 语义与障碍落图查询完全同源。
@@ -223,32 +242,43 @@ void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& ms
   if (!navigation_plugin) {
     return;
   }
-  const ayanami::sensor_msgs::PointCloud2 cloud = fromRosPointCloud2(*msg);
   // 障碍观测输入直递宿主插件 (不走全局旁路槽, 输出/观测分层纪律)。
   navigation_plugin->setPointcloud(cloud);
 }
 
-void AyanamiROS::laserscanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
+void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
   syncTransformsToCore(ros::Time(0), 0.0);
   if (!navigation_plugin) {
     return;
   }
-  const ayanami::sensor_msgs::LaserScan scan = fromRosLaserScan(*msg);
   navigation_plugin->setLaserScan(scan);
 }
 
+void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
+  // Task 8: ros_msg_converter 统一转换 (spec §4.3); 回调只转换, 核心边界经
+  // submitSensor (TF 预同步 + 直递宿主)。
+  if (!msg) {
+    return;
+  }
+  submitSensor(fromRosPointCloud2(*msg));
+}
+
+void AyanamiROS::laserscanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
+  if (!msg) {
+    return;
+  }
+  submitSensor(fromRosLaserScan(*msg));
+}
+
 void AyanamiROS::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
+  if (!msg) {
+    return;
+  }
   geometry_msgs::TwistStamped ros_twist;
   ros_twist.header = msg->header;
   ros_twist.header.frame_id = msg->child_frame_id;
   ros_twist.twist = msg->twist.twist;
-  updateOdomVelocity(fromRosTwist(ros_twist));
-}
-
-void AyanamiROS::updateOdomVelocity(const ayanami::geometry_msgs::TwistStamped& twist) {
-  // 直写全局 RobotStateController (核心 controller execution 读取最新速度;
-  // 位姿仍由核心侧经 TransformStore 查询)。
-  ayanami::components::RobotStateController::instance().setOdometry(twist);
+  setOdometry(fromRosTwist(ros_twist));
 }
 
 void AyanamiROS::syncTransformsToCore() {
@@ -257,13 +287,14 @@ void AyanamiROS::syncTransformsToCore() {
   // → TransformStamped → Eigen::Isometry3d → TransformStore::setTransform。
   // stamp 用 TF2 buffer 返回的真实 TransformStamped.header.stamp (传感器/TF
   // 发布时刻), 不再用 ros::Time::now() 伪造; lookup 用 Time(0) 即 latest。
-  // TF producers start alongside this node. Use a short bounded wait so a
-  // normal TF warm-up race does not become an immediate lookup failure.
-  syncTransformsToCore(ros::Time(0), 0.02);
+  // timeout 必须为 0: tf2_ros 的带 timeout 等待以 ros::Time::now() (sim time)
+  // 计时, /clock 停摆 (llvmpipe/物理卡顿) 时会无限阻塞 50Hz 同步循环 —— 循环
+  // 一旦阻塞, 扫描落图/滚动窗口/目标下发全部冻结 (实测卡死根因之一)。缺边由
+  // checkTfHealth + 同步缺边诊断兜底, 下一周期重试即可。
+  syncTransformsToCore(ros::Time(0), 0.0);
 }
 
 void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
-  auto& robot_state_controller = ayanami::components::RobotStateController::instance();
   const auto now = std::chrono::steady_clock::now();
   for (const auto& edge : tf_listener.tfSyncEdges()) {
     const std::string& target = edge.first;
@@ -287,7 +318,41 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
         is_static = inserted.first->second;
       }
       const auto core_stamp = is_static ? ayanami::Timestamp::latest() : detail::fromRosTime(tf_msg.header.stamp);
-      robot_state_controller.setTransform(target, source, core_stamp, tf2::transformToEigen(tf_msg), is_static);
+      const Eigen::Isometry3d edge_tf = tf2::transformToEigen(tf_msg);
+      setTransform(target, source, core_stamp, edge_tf, is_static);
+      // 全局动态图重建触发 (仅 odom<-base_footprint 动态边): 累计机器人
+      // 旋转/平移, 超阈值即清空全局动态层 (见 hpp 注释)。
+      if (!is_static && target == odom_frame && source == robot_frame) {
+        std::lock_guard<std::mutex> jump_lock(localization_jump_mutex);
+        const Eigen::Vector3d delta =
+            edge_tf.translation() - localization_jump_prev.translation();
+        const double dyaw_raw =
+            Eigen::Rotation2Dd(edge_tf.linear().topLeftCorner<2, 2>())
+                .angle() -
+            Eigen::Rotation2Dd(
+                localization_jump_prev.linear().topLeftCorner<2, 2>())
+                .angle();
+        const double dyaw = std::atan2(std::sin(dyaw_raw), std::cos(dyaw_raw));
+        if (localization_jump_prev_valid) {
+          localization_accum_yaw += std::abs(dyaw);
+          localization_accum_pos += delta.norm();
+        }
+        localization_jump_prev = edge_tf;
+        localization_jump_prev_valid = true;
+        if (localization_jump_prev_valid &&
+            (localization_accum_yaw > localization_clear_yaw_threshold ||
+             localization_accum_pos > localization_clear_pos_threshold)) {
+          if (navigation_plugin) {
+            spdlog::info(
+                "accumulated motion since last clear (dyaw={:.3f} rad, "
+                "dpos={:.3f} m); clearing global dynamic costmap",
+                localization_accum_yaw, localization_accum_pos);
+            navigation_plugin->onLocalizationJump();
+          }
+          localization_accum_yaw = 0.0;
+          localization_accum_pos = 0.0;
+        }
+      }
     } else {
       // 持续缺边诊断 (只由 loop 的低频路径输出; 传感器回调 timeout=0 只快速
       // 探活, 不在这里阻塞)。边连续 ≥2s 不可用且距上次诊断 ≥5s 时提示一次,

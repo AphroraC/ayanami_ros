@@ -223,7 +223,7 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
 
   ayanami::actions::GoalResult<ayanami::actions::ExePathResult> exe_result;
   exe_result.status = ayanami::actions::GoalStatus::SUCCEEDED;
-  exe_result.result.error = ayanami::FailureCode::None;
+  exe_result.result.error = ayanami::FailureCode::NONE;
   exe_result.result.reached = true;
   exe_result.result.message = "reached";
   const int er_before = pubCount("rvizViewerExePathResultPubCount");
@@ -244,7 +244,7 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
 
   ayanami::actions::GoalResult<ayanami::actions::RecoveryResult> recovery_result;
   recovery_result.status = ayanami::actions::GoalStatus::SUCCEEDED;
-  recovery_result.result.error = ayanami::FailureCode::None;
+  recovery_result.result.error = ayanami::FailureCode::NONE;
   const int rr_before = pubCount("rvizViewerRecoveryResultPubCount");
   ayanami::interfaces::NavigationCallbacks::on_recovery_result(recovery_result);
   EXPECT_GE(pubCount("rvizViewerRecoveryResultPubCount"), rr_before + 1);
