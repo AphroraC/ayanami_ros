@@ -1,12 +1,12 @@
-// Task 8: ros_msg_converter TDD 测试 (spec §6 Eigen ↔ ROS msgs)。
+// ros_msg_converter TDD 测试 (Eigen ↔ ROS msgs)。
 //
 // 用例覆盖 6+ 类 converter:
-//   1. PoseStamped round-trip (ROS→core→ROS 反查 frame_id / translation 一致)
-//   2. TwistStamped round-trip
-//   3. Path → ROS (多 pose, 逐 pose 经 fromRosPose 反查一致)
-//   4. OccupancyGrid → ROS 基本字段 (width/height/resolution/origin/data)
-//   5. LaserScan ← ROS 基本字段
-//   6. PointCloud2 简单转 + round-trip (height=1, width=10, point_step=12 xyz)
+// 1. PoseStamped round-trip (ROS→core→ROS 反查 frame_id / translation 一致)
+// 2. TwistStamped round-trip
+// 3. Path → ROS (多 pose, 逐 pose 经 fromRosPose 反查一致)
+// 4. OccupancyGrid → ROS 基本字段 (width/height/resolution/origin/data)
+// 5. LaserScan ← ROS 基本字段
+// 6. PointCloud2 简单转 + round-trip (height=1, width=10, point_step=12 xyz)
 
 #include <cmath>
 #include <cstdint>

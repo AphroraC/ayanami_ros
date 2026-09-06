@@ -1,14 +1,14 @@
-// Task 6: AyanamiROS 构造 + 加载链 TDD 测试。
+// AyanamiROS 构造 + 加载链 TDD 测试。
 //
 // 无 roscore 环境 (headless)。用临时 config 目录 (全套 M1 配置 + config_ros.json)
 // + 真实 rviz_viewer 扩展 (libayanami_rviz_viewer.so), 验证:
-//   1. AyanamiROS 构造按 spec §4.2 顺序完成: GlobalConfig → loadExtensionModules
-//      → loadNavigationPlugin (dlopen libayanami_costmap_navigation.so +
-//      initialize + start) → subscribeTopics。
-//   2. 扩展先于 navigation->start() 注册 (M2-P1): rviz_viewer 构造期注册的
-//      on_costmap_visualization 订阅必须收到 start() 的首波可视化 emit
-//      (通过 rviz_viewer .so 导出的 extern "C" 计数查询)。
-//   3. extension_modules / navigation_plugin 成员就位; start()/stop() 无崩。
+// 1. AyanamiROS 构造按 顺序完成: GlobalConfig → loadExtensionModules
+// → loadNavigationPlugin (dlopen libayanami_costmap_navigation.so +
+// initialize + start) → subscribeTopics。
+// 2. 扩展先于 navigation->start 注册 : rviz_viewer 构造期注册的
+// on_costmap_visualization 订阅必须收到 start 的首波可视化 emit
+// (通过 rviz_viewer .so 导出的 extern "C" 计数查询)。
+// 3. extension_modules / navigation_plugin 成员就位; start/stop 无崩。
 
 #include <dlfcn.h>
 
@@ -64,7 +64,7 @@ std::string free_pgm(int width, int height, int max_value) {
   return content;
 }
 
-// 全套 M1 配置 (对标 spec §9, headless_e2e 结构) + config_ros.json。
+// 全套 M1 配置 (对标 , headless_e2e 结构) + config_ros.json。
 // 插件 so 用裸名: catkin 测试环境 LD_LIBRARY_PATH 已含 devel/lib。
 std::filesystem::path makeConfigDir() {
   const auto dir =
@@ -246,19 +246,19 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationPlugin) {
   ASSERT_EQ(node.extensionModules().size(), 1u);
 
   // 2) 核心导航宿主插件加载成功 (dlopen libayanami_costmap_navigation.so +
-  //    initialize + start)。
+  // initialize + start)。
   ASSERT_NE(node.navigationPlugin(), nullptr);
 
-  // 3) 加载顺序 (M2-P1): 扩展在 navigation->start() 前注册。构造期
-  //    loadNavigationPlugin→start() 会 emit on_costmap_visualization; 若顺序
-  //    错误 (nav 先于 ext), rviz_viewer 订阅未注册, 计数恒 0。此处计数 > 0 即证明
-  //    扩展构造先于 navigation start 完成。
+  // 3) 加载顺序 : 扩展在 navigation->start 前注册。构造期
+  // loadNavigationPlugin→start 会 emit on_costmap_visualization; 若顺序
+  // 错误 (nav 先于 ext), rviz_viewer 订阅未注册, 计数恒 0。此处计数 > 0 即证明
+  // 扩展构造先于 navigation start 完成。
   const int emits = rvizViewerCostmapPubCount();
   EXPECT_GT(emits, 0) <<
-      "extension 订阅应在 navigation_plugin->start() 前注册 (M2-P1)";
+      "extension 订阅应在 navigation_plugin->start() 前注册";
   EXPECT_EQ(node.configPath(), config_dir.string());
 
-  // 4) start() 进 loop, stop() join; 不挂, 无 segfault。
+  // 4) start 进 loop, stop join; 不挂, 无 segfault。
   EXPECT_NO_THROW({
     node.start();
     ros::WallDuration(0.15).sleep();
@@ -296,7 +296,7 @@ ayanami::geometry_msgs::PoseStamped makeAyaPose(double x, double y) {
 
 }  // namespace
 
-// latest-wins goal 邮箱 (spec §4.2): ROS 回调侧 submitGoal 只覆写 pending_goal
+// latest-wins goal 邮箱 : ROS 回调侧 submitGoal 只覆写 pending_goal
 // (不排队), loop 侧 drainPendingGoal 每次最多投递当前最新一条再置空。
 TEST(AyanamiROS, goalMailboxIsLatestWinsAndDrainsAtMostLatest) {
   const auto config_dir = makeConfigDir();
@@ -334,7 +334,7 @@ TEST(AyanamiROS, odomVelocityWiredIntoRobotStateController) {
   ASSERT_NE(node.navigationPlugin(), nullptr);
   auto& rsc = ayanami::components::RobotStateController::instance();
   rsc.resetVelocity();
-  // AyanamiROS 构造期间 navigation_plugin->initialize() 已用 config frame
+  // AyanamiROS 构造期间 navigation_plugin->initialize 已用 config frame
   // (map/odom/base_footprint) 初始化 singleton。
   EXPECT_EQ(rsc.getRobotFrame(), "base_footprint");
 

@@ -17,7 +17,7 @@
 namespace ayanami_ros {
 
 /**
- * @brief TF2 封装: tf2_ros::Buffer + TransformListener (spec §7 verbatim)。
+ * @brief TF2 封装: tf2_ros::Buffer + TransformListener (verbatim)。
  *
  * 构造时建 buffer + listener (spin_thread=true 起专用线程填 buffer), 保存
  * tf_sync_edges (由 config_ros.json 控, 默认 [map→odom, odom→base_link,

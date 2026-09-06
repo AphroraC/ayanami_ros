@@ -19,9 +19,9 @@
 
 namespace ayanami_ros {
 
-// spec §6: Eigen ↔ ROS msgs。header-only inline 实现 (轻便, 无需 .cpp)。
+// Eigen ↔ ROS msgs。header-only inline 实现 (轻便, 无需 .cpp)。
 // Header stamp 双向完整转换: ros::Time ↔ ayanami::Timestamp (纳秒)。
-// 语义对齐以 TF 通语义: ayanami::Timestamp::latest() (0ns) ↔ ros::Time(0)。
+// 语义对齐以 TF 通语义: ayanami::Timestamp::latest (0ns) ↔ ros::Time(0)。
 
 namespace detail {
 

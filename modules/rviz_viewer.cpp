@@ -78,13 +78,13 @@ const char* goalStatusName(ayanami::actions::GoalStatus status) {
 
 }  // namespace
 
-// spec §4.5 核心 -> ROS 输出桥接: ayanami_ros 本体只负责读取 ROS 数据并输入
+// 核心 -> ROS 输出桥接: ayanami_ros 本体只负责读取 ROS 数据并输入
 // 核心; 核心的全部输出 (四类 action goal/feedback/result、cmd_vel、costmap
 // 可视化、robot state) 一律经本 ext 的 NavigationCallbacks 全局回调订阅读取,
 // 并发布为对应 ROS 信息。本插件直接继承 ayanami::ExtensionModule, 构造期自建
 // ros::NodeHandle 并 advertise + add 订阅 (由 AyanamiROS::loadExtensionModules
-// dlopen 触发, 先于 navigation_plugin->start(), 满足 M2-P1 顺序); 析构期
-// remove callback ids。不 include costmap_2d/* (spec §4.6 红线): costmap 用
+// dlopen 触发, 先于 navigation_plugin->start, 满足 顺序); 析构期
+// remove callback ids。不 include costmap_2d/* (红线): costmap 用
 // core OccupancyGrid 转发为 nav_msgs::OccupancyGrid。
 class RvizViewer final : public ayanami::ExtensionModule {
 public:
@@ -98,7 +98,7 @@ public:
 
 private:
   void readConfig() {
-    // config_ros.json 缺失/不可读时 Config 为空文档 → 全回退默认 (spec §8.1)。
+    // config_ros.json 缺失/不可读时 Config 为空文档 → 全回退默认 。
     const ayanami::Config config_ros(
         ayanami::GlobalConfig::getConfigPath("config_ros"));
     const std::string sec = "ayanami_ros";
@@ -413,7 +413,7 @@ private:
   void publishVelocityCommand(
       const ayanami::geometry_msgs::TwistStamped& velocity) {
     g_velocity_pub_count.fetch_add(1);
-    // Task 12 stage C: gazebo_ros_diff_drive (noetic 2.9.3) 只订阅
+    // gazebo_ros_diff_drive (noetic 2.9.3) 只订阅
     // geometry_msgs/Twist (无 TwistStamped/legacyMode), 故 /cmd_vel 发 Twist。
     geometry_msgs::Twist twist;
     twist.linear.x = velocity.twist.linear.x();

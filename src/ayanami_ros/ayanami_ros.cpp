@@ -20,7 +20,7 @@ namespace ayanami_ros {
 namespace {
 
 // 经 Config API (config_ros.json) 读取 tf_sync_edges 列表 [[target, source], ...]
-// (spec §7, §4.4)。每条边须正好 2 项 (size==2), 否则跳过; 列表缺失/为空时用
+// (§4.4)。每条边须正好 2 项 (size==2), 否则跳过; 列表缺失/为空时用
 // 配置 map_frame/odom_frame/robot_frame 构造默认三条边。
 std::vector<std::pair<std::string, std::string>> readTfSyncEdges(const std::string& config_ros_path) {
   ayanami::Config config_ros(config_ros_path);
@@ -39,7 +39,7 @@ std::vector<std::pair<std::string, std::string>> readTfSyncEdges(const std::stri
     edges.emplace_back(edge[0], edge[1]);
   }
   if (edges.empty()) {
-    // spec §4.4 默认: map→odom, odom→base_link, map→base_link。
+    // 默认: map→odom, odom→base_link, map→base_link。
     edges = {{map_frame, odom_frame}, {odom_frame, robot_frame}, {map_frame, robot_frame}};
   }
   return edges;
@@ -76,8 +76,8 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   tf_listener(nh, readTfSyncEdges(config_path + "/config_ros.json")),
   configured_static_edges(readTfStaticEdges(config_path + "/config_ros.json")),
   navigation_so_name("libayanami_costmap_navigation.so") {
-  // spec §4.2 verbatim 顺序。
-  // 注意: 默认值里 ros::package::getPath() 只有在 param 缺失时才求值 (避免
+  // verbatim 顺序。
+  // 注意: 默认值里 ros::package::getPath 只有在 param 缺失时才求值 (避免
   // 无 roscore 测试环境触发 rospack 的 tinyxml2 符号冲突 / roscore 依赖)。
   ayanami::GlobalConfig::instance(config_path, /*override_path=*/true);
   ayanami::configureLogging();
@@ -91,13 +91,20 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   odom_frame = config_ros.param<std::string>("ayanami_ros", "odom_frame", "odom");
   robot_frame = config_ros.param<std::string>("ayanami_ros", "robot_frame", "base_footprint");
   tf_sync_rate = config_ros.param<double>("ayanami_ros", "tf_sync_rate", 50.0);
+ // tf_cache_duration: TransformStore 动态边按戳回溯窗口 (秒, 默认 10s 对齐
+ // tf2 DEFAULT_MAX_STORAGE_TIME)。必须在任何 TF 写入之前配置 (本构造函数
+ // 先于 loadNavigationPlugin/start, 此处是唯一的合法配置点)。
+  const double tf_cache_duration =
+      config_ros.param<double>("ayanami_ros", "tf_cache_duration", 10.0);
+  ayanami::interfaces::TransformStore::instance().configureCacheDuration(
+      tf_cache_duration);
   localization_clear_yaw_threshold = config_ros.param<double>(
       "ayanami_ros", "localization_clear_yaw_threshold", 1.0);
   localization_clear_pos_threshold = config_ros.param<double>(
       "ayanami_ros", "localization_clear_pos_threshold", 2.0);
   navigation_so_name = config_ros.param<std::string>("ayanami_ros", "navigation_so_name", navigation_so_name);
 
-  // 顺序关键 (M2-P1): 扩展必须先于 navigation_plugin->start() 注册其
+  // 顺序关键 : 扩展必须先于 navigation_plugin->start 注册其
   // NavigationCallbacks 订阅, 否则启动期第一波可视化 emit 被错过。
   loadExtensionModules(config_ros);
   loadNavigationPlugin(config_ros);
@@ -148,7 +155,7 @@ void AyanamiROS::loadExtensionModules(const ayanami::Config& config_ros) {
 void AyanamiROS::loadNavigationPlugin(const ayanami::Config& config_ros) {
   (void)config_ros;
   spdlog::info("load ayanami navigation plugin {}", navigation_so_name);
-  // 公共工厂装载 (requirement 2/4): ExtensionModule::load_module →
+  // 公共工厂装载 (4): ExtensionModule::load_module →
   // 类型化 dynamic_pointer_cast<AbstractNavigation> (所有权共享)。
   auto ext = ayanami::ExtensionModule::load_module(navigation_so_name);
   if (!ext) {
@@ -234,10 +241,14 @@ void AyanamiROS::setOdometry(const ayanami::geometry_msgs::TwistStamped& twist) 
 }
 
 void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
-  // Populate the core TF buffer before converting. 用 latest (Time(0)) 而
-  // 非传感器戳: 快于实时的仿真下传感器戳恒晚于 loop 已同步样本, fast_tf
-  // 无外推, 精确戳同步/查询会失败。latest 语义与障碍落图查询完全同源。
-  // timeout=0: 只同步当前已可用的边, TF 生产者短暂缺席时回调不阻塞。
+ // Populate the core TF buffer before delivering: 优先按传感器 header.stamp
+ // 同步 (ROS TF buffer 自带缓存可插值出传感器时刻的边变换, 写入精确样本,
+ // 使核心障碍落图的按戳查询可命中); 戳超前 ROS buffer 最新样本等失败场景
+ // 回退 latest。timeout=0: 不阻塞回调线程。
+  const ros::Time sensor_stamp = detail::toRosTime(cloud.header.stamp);
+  if (!sensor_stamp.isZero()) {
+    syncTransformsToCore(sensor_stamp, 0.0);
+  }
   syncTransformsToCore(ros::Time(0), 0.0);
   if (!navigation_plugin) {
     return;
@@ -247,6 +258,10 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
 }
 
 void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
+  const ros::Time sensor_stamp = detail::toRosTime(scan.header.stamp);
+  if (!sensor_stamp.isZero()) {
+    syncTransformsToCore(sensor_stamp, 0.0);
+  }
   syncTransformsToCore(ros::Time(0), 0.0);
   if (!navigation_plugin) {
     return;
@@ -255,7 +270,7 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
 }
 
 void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
-  // Task 8: ros_msg_converter 统一转换 (spec §4.3); 回调只转换, 核心边界经
+  // ros_msg_converter 统一转换 ; 回调只转换, 核心边界经
   // submitSensor (TF 预同步 + 直递宿主)。
   if (!msg) {
     return;
@@ -282,12 +297,12 @@ void AyanamiROS::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
 }
 
 void AyanamiROS::syncTransformsToCore() {
-  // Task 7+ (时间语义): 真实 TF2Listener 接入 (spec §4.4)。
+  // + (时间语义): 真实 TF2Listener 接入 。
   // 对 tf_sync_edges 每条边 lookupTransform(target, source, ros::Time(0))
   // → TransformStamped → Eigen::Isometry3d → TransformStore::setTransform。
   // stamp 用 TF2 buffer 返回的真实 TransformStamped.header.stamp (传感器/TF
-  // 发布时刻), 不再用 ros::Time::now() 伪造; lookup 用 Time(0) 即 latest。
-  // timeout 必须为 0: tf2_ros 的带 timeout 等待以 ros::Time::now() (sim time)
+  // 发布时刻), 不再用 ros::Time::now 伪造; lookup 用 Time(0) 即 latest。
+  // timeout 必须为 0: tf2_ros 的带 timeout 等待以 ros::Time::now (sim time)
   // 计时, /clock 停摆 (llvmpipe/物理卡顿) 时会无限阻塞 50Hz 同步循环 —— 循环
   // 一旦阻塞, 扫描落图/滚动窗口/目标下发全部冻结 (实测卡死根因之一)。缺边由
   // checkTfHealth + 同步缺边诊断兜底, 下一周期重试即可。
@@ -317,7 +332,19 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
         const auto inserted = tf_edge_static.emplace(key, configured_static);
         is_static = inserted.first->second;
       }
-      const auto core_stamp = is_static ? ayanami::Timestamp::latest() : detail::fromRosTime(tf_msg.header.stamp);
+      auto core_stamp = detail::fromRosTime(tf_msg.header.stamp);
+ // 未来戳钳位: 定位层会按 transform_tolerance 把 map->odom 戳写到未来
+ // (实测 AMCL tolerance=0.5 → +0.5s)。TransformStore 的 500ms 戳窗被未来
+ // 样本占据后, 传感器戳查询反而落在窗口之前全部失败。钳位到当前时钟,
+ // 让戳序列贴近真实时刻。
+      {
+        const auto now_stamp = detail::fromRosTime(ros::Time::now());
+        if (core_stamp.count() > now_stamp.count()) {
+          core_stamp = now_stamp;
+        }
+      }
+ // 注: 原 tf_time_offset 戳前移补丁已随 fast_tf 可配置回溯窗口退役
+ // (tf_cache_duration), 动态边写入真实 header.stamp。
       const Eigen::Isometry3d edge_tf = tf2::transformToEigen(tf_msg);
       setTransform(target, source, core_stamp, edge_tf, is_static);
       // 全局动态图重建触发 (仅 odom<-base_footprint 动态边): 累计机器人

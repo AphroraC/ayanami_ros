@@ -1,16 +1,16 @@
-// Task 9: rviz_viewer ROS extension .so (dlopen → create_extension_module →
+// rviz_viewer ROS extension .so (dlopen → create_extension_module →
 // RvizViewer : ayanami::ExtensionModule)。
 //
 // 无 roscore 环境 (headless)。用临时 config 目录 (含 config_ros.json, 覆盖 rviz
 // 话题名) + dlopen librviz_viewer.so, 验证:
-//   1. dlopen + create_extension_module + dynamic_cast<ayanami::ExtensionModule>。
-//   2. 构造期 (dlopen 时) 自建 ros::NodeHandle → advertiseTopics (16 publisher)
-//      + 注册 15 个 NavigationCallbacks 订阅 (ayanami 全部输出槽位); 扩展自身
-//      不 ros subscribe (输入职责归 AyanamiROS)。
-//   3. 主动 emit NavigationCallbacks 事件 → 对应 publish handler 被调 (经 .so 导出
-//      的计数 hook 证明), 无订阅者时 publish 为 no-op, 无崩。
-//   4. 话题名从 config_ros.json::ayanami_ros 读入 (planner_path_topic 覆盖验证)。
-//   5. ~RvizViewer → 15 个 callback id 全部 remove → 再 emit 计数不再增。
+// 1. dlopen + create_extension_module + dynamic_cast<ayanami::ExtensionModule>。
+// 2. 构造期 (dlopen 时) 自建 ros::NodeHandle → advertiseTopics (16 publisher)
+// + 注册 15 个 NavigationCallbacks 订阅 (ayanami 全部输出槽位); 扩展自身
+// 不 ros subscribe (输入职责归 AyanamiROS)。
+// 3. 主动 emit NavigationCallbacks 事件 → 对应 publish handler 被调 (经 .so 导出
+// 的计数 hook 证明), 无订阅者时 publish 为 no-op, 无崩。
+// 4. 话题名从 config_ros.json::ayanami_ros 读入 (planner_path_topic 覆盖验证)。
+// 5. ~RvizViewer → 15 个 callback id 全部 remove → 再 emit 计数不再增。
 
 #include <dlfcn.h>
 
@@ -181,7 +181,7 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
   ayanami::interfaces::NavigationCallbacks::on_get_path_result(failed);
   EXPECT_EQ(pubCount("rvizViewerPlannerPathPubCount"), planner_after);
 
-  // ---- 扩展输出槽位 (spec §4.5 扩展): goal/feedback/result 全覆盖 ----
+  // ---- 扩展输出槽位 (扩展): goal/feedback/result 全覆盖 ----
   ayanami::geometry_msgs::PoseStamped goal_pose =
       ayanami::geometry_msgs::PoseStamped::fromIsometry(
           "map", Eigen::Isometry3d::Identity());

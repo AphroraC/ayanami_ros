@@ -32,16 +32,16 @@
 namespace ayanami_ros {
 
 /**
- * @brief ayanami ROS1 边界宿主节点 (spec §4.1-§4.2)。
+ * @brief ayanami ROS1 边界宿主节点 (-§4.2)。
  *
  * 职责: 加载核心 AbstractNavigation 宿主插件 (dlopen
  * libayanami_costmap_navigation.so)
  * + 加载 ayanami::ExtensionModule 扩展 (rviz_viewer 等), 把 ROS topics → 核心
- * callback 转换, tf sync (T7 实接) 与 spinOnce 周期驱动。
+ * callback 转换, tf sync 与 spinOnce 周期驱动。
  *
- * 关键顺序 (spec §4.2 verbatim): loadExtensionModules → loadNavigationPlugin →
+ * 关键顺序 (verbatim): loadExtensionModules → loadNavigationPlugin →
  * subscribeTopics → loop_thread 启。扩展必须先于 navigation_plugin->start()
- * 注册 NavigationCallbacks 订阅, 否则启动期第一波可视化 emit 会被错过 (M2-P1
+ * 注册 NavigationCallbacks 订阅, 否则启动期第一波可视化 emit 会被错过 (
  * ruling)。
  */
 class AyanamiROS {
@@ -109,7 +109,7 @@ private:
 
   std::atomic<bool> kill_switch{false};
   std::thread loop_thread;
-  // latest-wins goal 邮箱 (spec §4.2): ROS 回调只转换 + 覆写 pending_goal,
+  // latest-wins goal 邮箱 : ROS 回调只转换 + 覆写 pending_goal,
   // loop 线程每次取当前最新一条下发 setGoal (不排队, 不丢未处理)。
   mutable std::mutex goal_mutex;
   std::optional<ayanami::geometry_msgs::PoseStamped> pending_goal;
@@ -129,7 +129,7 @@ private:
   std::set<std::pair<std::string, std::string>> configured_static_edges;
   double tf_sync_rate = 50.0;
 
-  // config_ros.json::ayanami_ros 边界参数 (spec §8.1)。
+  // config_ros.json::ayanami_ros 边界参数 。
   std::string laserscan_topic, pointcloud_topic, odom_topic, goal_topic;
   std::string map_frame, odom_frame, robot_frame;
   // 全局动态代价图重建触发 (odom<-base_footprint 边): 累计"自上次清空以来"

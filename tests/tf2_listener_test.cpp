@@ -1,11 +1,11 @@
-// Task 7: TF2Listener TDD 测试。
+// TF2Listener TDD 测试。
 //
 // 两条用例:
-//   1. 无 roscore / 空 buffer: buffer.lookupTransform 抛 tf2::TransformException
-//      → TF2Listener::lookupTransform 返回 false (catch 分支)。
-//   2. 真 roscore: 用 tf2_ros::StaticBroadcaster 发布一个静态 transform, 等待
-//      latched /tf_static 送达 listener 的 dedicated thread 后 lookup, 验证
-//      返回非零、非单位阵的 Eigen::Isometry3d。无 master 时 GTEST_SKIP。
+// 1. 无 roscore / 空 buffer: buffer.lookupTransform 抛 tf2::TransformException
+// → TF2Listener::lookupTransform 返回 false (catch 分支)。
+// 2. 真 roscore: 用 tf2_ros::StaticBroadcaster 发布一个静态 transform, 等待
+// latched /tf_static 送达 listener 的 dedicated thread 后 lookup, 验证
+// 返回非零、非单位阵的 Eigen::Isometry3d。无 master 时 GTEST_SKIP。
 
 #include <Eigen/Geometry>
 
@@ -62,7 +62,7 @@ TEST(TF2Listener, lookupStaticBroadcastTransform) {
   ros::WallDuration(1.0).sleep();
 
   // TransformStamped 重载: 一块拿回 TF2 buffer 的真实 header.stamp (供
-  // TransformStore 写入, 不再用 ros::Time::now() 伪造)。Time(0)=latest →
+  // TransformStore 写入, 不再用 ros::Time::now 伪造)。Time(0)=latest →
   // 返回最新动态帧, stamp 应为发布时刻。
   geometry_msgs::TransformStamped ts_out;
   ASSERT_TRUE(

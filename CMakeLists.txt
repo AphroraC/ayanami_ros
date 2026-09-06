@@ -18,6 +18,7 @@ endif()
 find_package(catkin REQUIRED COMPONENTS
   roscpp roslib tf2 tf2_eigen tf2_geometry_msgs tf2_ros
   nav_msgs sensor_msgs geometry_msgs std_msgs pcl_conversions
+  rm_msgs
 )
 
 find_package(behaviortree_cpp REQUIRED)
@@ -38,7 +39,7 @@ include_directories(${PROJECT_SOURCE_DIR}/../ayanami/thirdparty/fast_tf)
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ayanami_ros
-  CATKIN_DEPENDS roscpp roslib tf2 tf2_eigen tf2_geometry_msgs tf2_ros nav_msgs sensor_msgs geometry_msgs std_msgs pcl_conversions
+  CATKIN_DEPENDS roscpp roslib tf2 tf2_eigen tf2_geometry_msgs tf2_ros nav_msgs sensor_msgs geometry_msgs std_msgs pcl_conversions rm_msgs
 )
 
 add_library(ayanami_ros
@@ -56,6 +57,12 @@ target_link_libraries(ayanami_ros PUBLIC
 add_executable(ayanami_rosnode apps/ayanami_rosnode.cpp)
 target_link_libraries(ayanami_rosnode ayanami_ros)
 
+# cmd_vel_bridge: ayanami 的 /cmd_vel (Twist) -> rm 底盘 /cmd_chassis
+# (ChassisCmd, 注入 mode/accel/power_limit; ChassisBase 的 RampFilter 在
+# accel=0 时速度命令永远爬不上去)。纯 ROS 节点, 不依赖 libayanami。
+add_executable(cmd_vel_bridge apps/cmd_vel_bridge.cpp)
+target_link_libraries(cmd_vel_bridge ${catkin_LIBRARIES})
+
 # Task 9: rviz_viewer ROS extension .so (spec §4.5 核心->ROS)。导出
 # create_extension_module 工厂符号供 AyanamiROS dlopen; config_ros.json::extension_modules
 # 以 "libayanami_rviz_viewer.so" 裸名引用。
@@ -63,7 +70,7 @@ add_library(rviz_viewer SHARED modules/rviz_viewer.cpp)
 target_link_libraries(rviz_viewer PRIVATE ayanami_ros ayanami::ayanami)
 set_target_properties(rviz_viewer PROPERTIES PREFIX "libayanami_")
 
-install(TARGETS ayanami_ros ayanami_rosnode rviz_viewer
+install(TARGETS ayanami_ros ayanami_rosnode rviz_viewer cmd_vel_bridge
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY include/ DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
