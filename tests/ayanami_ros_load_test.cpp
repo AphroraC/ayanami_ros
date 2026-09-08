@@ -270,7 +270,7 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationPlugin) {
   // construction completed before navigation start.
   const int emits = rvizViewerCostmapPubCount();
   EXPECT_GT(emits, 0) <<
-      "extension 订阅应在 navigation_plugin->start() 前注册";
+      "extension subscriptions must register before navigation_plugin->start()";
   EXPECT_EQ(node.configPath(), config_dir.string());
 
   // 4) start enters the loop, stop joins; no hang, no segfault.

@@ -139,11 +139,11 @@ void AyanamiROS::stop() {
   if (loop_thread.joinable()) {
     loop_thread.join();
   }
-  tf_queue_.disable();
-  if (tf_queue_thread_.joinable()) {
-    tf_queue_thread_.join();
+  tf_queue.disable();
+  if (tf_queue_thread.joinable()) {
+    tf_queue_thread.join();
   }
-  tf_queue_.clear();
+  tf_queue.clear();
   if (navigation_plugin) {
     navigation_plugin->stop();
   }
@@ -212,13 +212,13 @@ void AyanamiROS::subscribeTopics() {
   // polling ceiling).
   // The 50Hz loop sync is kept as a fallback (covers /tf_static edges and
   // extreme message-loss scenarios).
-  tf_nh_ = ros::NodeHandle();
-  tf_nh_.setCallbackQueue(&tf_queue_);
-  tf_sub_ = tf_nh_.subscribe("/tf", 200, &AyanamiROS::tfCallback, this,
+  tf_nh = ros::NodeHandle();
+  tf_nh.setCallbackQueue(&tf_queue);
+  tf_sub = tf_nh.subscribe("/tf", 200, &AyanamiROS::tfCallback, this,
                              ros::TransportHints().tcpNoDelay());
-  tf_queue_thread_ = std::thread([this] {
+  tf_queue_thread = std::thread([this] {
     while (ros::ok() && !kill_switch.load()) {
-      tf_queue_.callAvailable(ros::WallDuration(0.0005));
+      tf_queue.callAvailable(ros::WallDuration(0.0005));
     }
   });
   spdlog::info("subscribe /tf for event-driven transform sync");
@@ -286,7 +286,7 @@ void AyanamiROS::tfCallback(const tf2_msgs::TFMessage::ConstPtr& msg) {
   // race with TransformListener's asynchronous insertion: otherwise this
   // callback might run before the insertion, read a stale sample, and skip the
   // frame forever), then trigger the sync.
-  // syncTransformsToCore serializes internally with sync_mutex_; no lock is
+  // syncTransformsToCore serializes internally with sync_mutex; no lock is
   // needed here.
   for (const auto& transform : msg->transforms) {
     tf_listener.setTransform(transform);
@@ -375,7 +375,7 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
   // tf thread / loop thread / sensor callbacks may enter concurrently;
   // serialization protects the tf_edge_* intermediate state and the downstream
   // writer's ordering assumptions.
-  std::lock_guard<std::mutex> sync_lock(sync_mutex_);
+  std::lock_guard<std::mutex> sync_lock(sync_mutex);
   const auto now = std::chrono::steady_clock::now();
   for (const auto& edge : tf_listener.tfSyncEdges()) {
     const std::string& target = edge.first;
@@ -476,10 +476,11 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
       }
       if (need_diag) {
         spdlog::warn(
-            "TF 同步缺边 {} <- {} 持续 ≥2s: 障碍落图与机器人位姿将异常。"
-            "检查 gazebo 差速 (odom->base_footprint)、AMCL (map->odom)、"
-            "robot_state_publisher 是否存活; 若曾多次 roslaunch, 残留的多个"
-            "仿真实例会同时发布同名 TF 造成帧缺失/乱序",
+            "TF sync missing edge {} <- {} for over 2s: obstacle stamping "
+            "and the robot pose will misbehave. Check the gazebo diff-drive "
+            "(odom->base_footprint), AMCL (map->odom) and "
+            "robot_state_publisher; if roslaunch ran several times, leftover "
+            "simulation instances may publish duplicate TF frames",
             target, source);
       }
     }
@@ -505,7 +506,7 @@ void AyanamiROS::checkTfHealth() {
   }
   if (missing_edges.empty()) {
     if (tf_health_was_bad) {
-      spdlog::info("TF 健康诊断: 全部 {} 条同步边已恢复可用",
+      spdlog::info("TF health check: all {} synced edges are available again",
                    tf_listener.tfSyncEdges().size());
       tf_health_was_bad = false;
     }
@@ -516,10 +517,12 @@ void AyanamiROS::checkTfHealth() {
     tf_health_last_log = now;
     tf_health_was_bad = true;
     spdlog::warn(
-        "ROS TF 健康诊断: 边不可用 [{}]。当前帧树:\n{}\n"
-        "若 odom<-base_footprint 缺失: 检查 gazebo 差速插件 (libgazebo_ros_"
-        "diff_drive, publishOdomTF) 是否随模型加载; 若 map<-odom 缺失: 等待/"
-        "检查 AMCL 定位; 多个仿真实例残留会同时发布同名 TF 造成帧缺失与乱序",
+        "ROS TF health check: unavailable edges [{}]. Current frame "
+        "tree:\n{}\nIf odom<-base_footprint is missing, check that the "
+        "gazebo diff-drive plugin (libgazebo_ros_diff_drive, publishOdomTF) "
+        "loaded with the model; if map<-odom is missing, wait for or check "
+        "AMCL; leftover simulation instances may publish duplicate TF "
+        "frames",
         missing_edges, tf_listener.framesAsString());
   }
 }

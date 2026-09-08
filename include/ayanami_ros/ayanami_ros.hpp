@@ -124,13 +124,13 @@ private:
   std::thread loop_thread;
   // Event-driven TF sync: dedicated /tf callback queue + thread (bypasses the
   // 50Hz loop's ros::spinOnce, otherwise the callback rate is clamped by the
-  // polling ceiling); sync_mutex_ serializes concurrent syncs from the three
+  // polling ceiling); sync_mutex serializes concurrent syncs from the three
   // entry points: tf thread / loop thread / sensor callbacks.
-  ros::CallbackQueue tf_queue_;
-  ros::NodeHandle tf_nh_;
-  ros::Subscriber tf_sub_;
-  std::thread tf_queue_thread_;
-  std::mutex sync_mutex_;
+  ros::CallbackQueue tf_queue;
+  ros::NodeHandle tf_nh;
+  ros::Subscriber tf_sub;
+  std::thread tf_queue_thread;
+  std::mutex sync_mutex;
   // latest-wins goal mailbox: the ROS callback only converts + overwrites
   // pending_goal; each round the loop thread takes the current latest one and
   // dispatches setGoal (no queueing, no unhandled goal is lost).

@@ -138,49 +138,21 @@ inline nav_msgs::OccupancyGrid toRosOccupancyGrid(const ayanami::nav_msgs::Occup
   return out;
 }
 
-// ---- PointCloud2 (PCL aware: aligned with the sensor data blob, field-by-field copy) ----
+// ---- PointCloud2 (PCL XYZI: the single core representation) ----
 
-inline ayanami::sensor_msgs::PointCloud2 fromRosPointCloud2(const sensor_msgs::PointCloud2& in) {
+inline ayanami::sensor_msgs::PointCloud2 fromRosPointCloud2(
+    const sensor_msgs::PointCloud2& in) {
   ayanami::sensor_msgs::PointCloud2 out;
   out.header = detail::fromRosHeader(in.header);
-  out.height = in.height;
-  out.width = in.width;
-  out.fields.reserve(in.fields.size());
-  for (const auto& f : in.fields) {
-    ayanami::sensor_msgs::PointField pf;
-    pf.name = f.name;
-    pf.offset = f.offset;
-    pf.datatype = f.datatype;
-    pf.count = f.count;
-    out.fields.push_back(pf);
-  }
-  out.is_bigendian = in.is_bigendian;
-  out.point_step = in.point_step;
-  out.row_step = in.row_step;
-  out.data.assign(in.data.begin(), in.data.end());
-  out.is_dense = in.is_dense;
+  pcl::fromROSMsg(in, out.cloud);
   return out;
 }
 
-inline sensor_msgs::PointCloud2 toRosPointCloud2(const ayanami::sensor_msgs::PointCloud2& in) {
+inline sensor_msgs::PointCloud2 toRosPointCloud2(
+    const ayanami::sensor_msgs::PointCloud2& in) {
   sensor_msgs::PointCloud2 out;
   out.header = detail::toRosHeader(in.header);
-  out.height = in.height;
-  out.width = in.width;
-  out.fields.reserve(in.fields.size());
-  for (const auto& f : in.fields) {
-    sensor_msgs::PointField pf;
-    pf.name = f.name;
-    pf.offset = f.offset;
-    pf.datatype = f.datatype;
-    pf.count = f.count;
-    out.fields.push_back(pf);
-  }
-  out.is_bigendian = in.is_bigendian;
-  out.point_step = in.point_step;
-  out.row_step = in.row_step;
-  out.data.assign(in.data.begin(), in.data.end());
-  out.is_dense = in.is_dense;
+  pcl::toROSMsg(in.cloud, out);
   return out;
 }
 

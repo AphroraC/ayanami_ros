@@ -118,7 +118,7 @@ TEST(ConfigSpecVerify, configRosIsInputBoundaryOnly) {
   };
   for (const auto* key : k_output_keys) {
     EXPECT_FALSE(cfg.hasParam(sec, key))
-        << "config_ros.json 不应含输出/扩展键: " << key;
+        << "config_ros.json must not contain output/extension keys: " << key;
   }
 
   EXPECT_EQ(cfg.param<std::string>(sec, "map_frame", ""), "map");
@@ -141,7 +141,7 @@ TEST(ConfigSpecVerify, extensionModulesIncludeRvizViewer) {
       ayanami::GlobalConfig::getConfigPath("config_extensions"));
   const auto mods = cfg.param<std::vector<std::string>>(
       "extensions", "loading_extension_modules", {});
-  ASSERT_FALSE(mods.empty()) << "loading_extension_modules 不能为空";
+  ASSERT_FALSE(mods.empty()) << "loading_extension_modules must not be empty";
   bool found = false;
   for (const auto& m : mods) {
     if (m == "libayanami_rviz_viewer.so") {
@@ -149,7 +149,7 @@ TEST(ConfigSpecVerify, extensionModulesIncludeRvizViewer) {
     }
   }
   EXPECT_TRUE(found)
-      << "loading_extension_modules 应含 libayanami_rviz_viewer.so";
+      << "loading_extension_modules must contain libayanami_rviz_viewer.so";
 }
 
 TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
@@ -208,9 +208,9 @@ TEST(ConfigSpecVerify, tfSyncEdgesAreValidPairs) {
       ayanami::GlobalConfig::getConfigPath("config_ros"));
   const auto edges = cfg.param<std::vector<std::vector<std::string>>>(
       "ayanami_ros", "tf_sync_edges", {});
-  ASSERT_FALSE(edges.empty()) << "tf_sync_edges 不能为空";
+  ASSERT_FALSE(edges.empty()) << "tf_sync_edges must not be empty";
   for (const auto& edge : edges) {
-    ASSERT_EQ(edge.size(), 2u) << "每条 tf_sync_edges 必须为 2 项";
+    ASSERT_EQ(edge.size(), 2u) << "each tf_sync_edges entry must have exactly 2 items";
     EXPECT_FALSE(edge[0].empty());
     EXPECT_FALSE(edge[1].empty());
   }
@@ -280,7 +280,7 @@ TEST(ConfigSpecVerify, costmapObservationSourcesUseScan) {
       found = true;
     }
   }
-  EXPECT_TRUE(found) << "observation_sources 应含 Gazebo LaserScan (scan)";
+  EXPECT_TRUE(found) << "observation_sources must contain the Gazebo LaserScan (scan)";
 }
 
 TEST(ConfigSpecVerify, robotFrameSingleSource) {

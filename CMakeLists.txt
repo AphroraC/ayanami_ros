@@ -13,7 +13,7 @@ check_cxx_compiler_flag("-mcx16" AYANAMI_ROS_HAS_MCX16)
 if(AYANAMI_ROS_HAS_MCX16)
   add_compile_options(-mcx16)
 else()
-  message(WARNING "ayanami_ros: -mcx16 不受支持; 与本 workspace 的 ayanami 原子策略可能不一致")
+  message(WARNING "ayanami_ros: -mcx16 not supported; it may disagree with the ayanami atomic policy of this workspace")
 endif()
 
 find_package(catkin REQUIRED COMPONENTS
