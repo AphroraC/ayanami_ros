@@ -4,7 +4,6 @@
 #include <ayanami/utility/config.hpp>
 #include <ayanami/utility/extension_module.hpp>
 #include <ros/ros.h>
-#include <geometry_msgs/Twist.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <nav_msgs/OccupancyGrid.h>
@@ -22,10 +21,10 @@ namespace ayanami_ros {
 
 namespace {
 
-// 测试计数 hook (rvizViewerTest 经 dlsym 读): 各 publish handler 被调次数。
+// Test counting hooks (read by rvizViewerTest via dlsym): call count per
+// publish handler.
 std::atomic<int> g_planner_path_pub_count{0};
 std::atomic<int> g_smoother_path_pub_count{0};
-std::atomic<int> g_velocity_pub_count{0};
 std::atomic<int> g_global_costmap_pub_count{0};
 std::atomic<int> g_local_costmap_pub_count{0};
 std::atomic<int> g_planner_goal_pub_count{0};
@@ -38,8 +37,9 @@ std::atomic<int> g_exe_path_result_pub_count{0};
 std::atomic<int> g_recovery_goal_pub_count{0};
 std::atomic<int> g_recovery_feedback_pub_count{0};
 std::atomic<int> g_recovery_result_pub_count{0};
+std::atomic<int> g_navigation_result_pub_count{0};
 
-// 测试话题 hook: readConfig 读 config_ros.json 后的最终 topic。
+// Test topic hook: the final topic after readConfig reads config_extensions.json.
 std::string g_planner_path_topic;
 
 const char* failureCodeName(ayanami::FailureCode code) {
@@ -78,14 +78,17 @@ const char* goalStatusName(ayanami::actions::GoalStatus status) {
 
 }  // namespace
 
-// 核心 -> ROS 输出桥接: ayanami_ros 本体只负责读取 ROS 数据并输入
-// 核心; 核心的全部输出 (四类 action goal/feedback/result、cmd_vel、costmap
-// 可视化、robot state) 一律经本 ext 的 NavigationCallbacks 全局回调订阅读取,
-// 并发布为对应 ROS 信息。本插件直接继承 ayanami::ExtensionModule, 构造期自建
-// ros::NodeHandle 并 advertise + add 订阅 (由 AyanamiROS::loadExtensionModules
-// dlopen 触发, 先于 navigation_plugin->start, 满足 顺序); 析构期
-// remove callback ids。不 include costmap_2d/* (红线): costmap 用
-// core OccupancyGrid 转发为 nav_msgs::OccupancyGrid。
+// Core -> ROS output bridge: the ayanami_ros body only reads ROS data and
+// feeds it into the core; all core outputs (the four action
+// goal/feedback/result kinds, cmd_vel, costmap visualization, robot state) are
+// read through this extension's NavigationCallbacks global callback
+// subscriptions and published as the corresponding ROS messages. This plugin
+// derives directly from ayanami::ExtensionModule; at construction time it
+// creates its own ros::NodeHandle and advertises + adds subscriptions
+// (triggered by the dlopen in AyanamiROS::loadExtensionModules, before
+// navigation_plugin->start, satisfying the ordering); at destruction time it
+// removes the callback ids. Does not include costmap_2d/* (red line): costmaps
+// are forwarded from the core OccupancyGrid as nav_msgs::OccupancyGrid.
 class RvizViewer final : public ayanami::ExtensionModule {
 public:
   RvizViewer() : nh("~") {
@@ -98,71 +101,70 @@ public:
 
 private:
   void readConfig() {
-    // config_ros.json 缺失/不可读时 Config 为空文档 → 全回退默认 。
-    const ayanami::Config config_ros(
-        ayanami::GlobalConfig::getConfigPath("config_ros"));
-    const std::string sec = "ayanami_ros";
+    // Single source for the extension's own parameters = the rviz_viewer
+    // section of config_extensions.json (asuka mode): config_ros only carries
+    // the ROS input boundary; every bypass visualization topic published by
+    // this plugin through global callback slots is configured here. When the
+    // file is missing/unreadable, Config is an empty document -> everything
+    // falls back to defaults.
+    const ayanami::Config extensions_config(
+        ayanami::GlobalConfig::getConfigPath("config_extensions"));
+    const std::string sec = "rviz_viewer";
     planner_path_topic =
-        config_ros.param<std::string>(sec, "planner_path_topic",
-                                      "/ayanami/planner/path");
+        extensions_config.param<std::string>(sec, "planner_path_topic",
+                                             "/ayanami/planner/path");
     smoother_path_topic =
-        config_ros.param<std::string>(sec, "smoother_path_topic",
-                                      "/ayanami/smoother/path");
-    velocity_topic =
-        config_ros.param<std::string>(sec, "cmd_vel_topic", "/cmd_vel");
-    velocity_stamped_topic =
-        config_ros.param<std::string>(sec, "cmd_vel_stamped_topic",
-                                      "/cmd_vel_stamped");
+        extensions_config.param<std::string>(sec, "smoother_path_topic",
+                                             "/ayanami/smoother/path");
     global_costmap_topic =
-        config_ros.param<std::string>(sec, "global_costmap_topic",
-                                      "/ayanami/global_costmap");
+        extensions_config.param<std::string>(sec, "global_costmap_topic",
+                                             "/ayanami/global_costmap");
     local_costmap_topic =
-        config_ros.param<std::string>(sec, "local_costmap_topic",
-                                      "/ayanami/local_costmap");
+        extensions_config.param<std::string>(sec, "local_costmap_topic",
+                                             "/ayanami/local_costmap");
     planner_goal_topic =
-        config_ros.param<std::string>(sec, "planner_goal_topic",
-                                      "/ayanami/planner/goal");
+        extensions_config.param<std::string>(sec, "planner_goal_topic",
+                                             "/ayanami/planner/goal");
     planner_feedback_topic =
-        config_ros.param<std::string>(sec, "planner_feedback_topic",
-                                      "/ayanami/planner/feedback");
+        extensions_config.param<std::string>(sec, "planner_feedback_topic",
+                                             "/ayanami/planner/feedback");
     smoother_input_path_topic =
-        config_ros.param<std::string>(sec, "smoother_input_path_topic",
-                                      "/ayanami/smoother/input_path");
+        extensions_config.param<std::string>(sec, "smoother_input_path_topic",
+                                             "/ayanami/smoother/input_path");
     smoother_feedback_topic =
-        config_ros.param<std::string>(sec, "smoother_feedback_topic",
-                                      "/ayanami/smoother/feedback");
+        extensions_config.param<std::string>(sec, "smoother_feedback_topic",
+                                             "/ayanami/smoother/feedback");
     controller_path_topic =
-        config_ros.param<std::string>(sec, "controller_path_topic",
-                                      "/ayanami/controller/path");
+        extensions_config.param<std::string>(sec, "controller_path_topic",
+                                             "/ayanami/controller/path");
     controller_feedback_topic =
-        config_ros.param<std::string>(sec, "controller_feedback_topic",
-                                      "/ayanami/controller/feedback");
+        extensions_config.param<std::string>(sec, "controller_feedback_topic",
+                                             "/ayanami/controller/feedback");
     controller_status_topic =
-        config_ros.param<std::string>(sec, "controller_status_topic",
-                                      "/ayanami/controller/status");
+        extensions_config.param<std::string>(sec, "controller_status_topic",
+                                             "/ayanami/controller/status");
     recovery_goal_topic =
-        config_ros.param<std::string>(sec, "recovery_goal_topic",
-                                      "/ayanami/recovery/goal");
+        extensions_config.param<std::string>(sec, "recovery_goal_topic",
+                                             "/ayanami/recovery/goal");
     recovery_feedback_topic =
-        config_ros.param<std::string>(sec, "recovery_feedback_topic",
-                                      "/ayanami/recovery/feedback");
+        extensions_config.param<std::string>(sec, "recovery_feedback_topic",
+                                             "/ayanami/recovery/feedback");
     recovery_status_topic =
-        config_ros.param<std::string>(sec, "recovery_status_topic",
-                                      "/ayanami/recovery/status");
+        extensions_config.param<std::string>(sec, "recovery_status_topic",
+                                             "/ayanami/recovery/status");
+    navigation_status_topic =
+        extensions_config.param<std::string>(sec, "navigation_status_topic",
+                                             "/ayanami/navigation_status");
     g_planner_path_topic = planner_path_topic;
   }
 
   void advertiseTopics() {
-    // 路径与地图 latched (latched=true), 新订阅的 rviz 立即拿到最新一帧。
+    // Paths and maps are latched (latched=true), so a newly subscribed rviz
+    // immediately receives the latest frame.
     planner_path_pub =
         nh.advertise<nav_msgs::Path>(planner_path_topic, 1, true);
     smoother_path_pub =
         nh.advertise<nav_msgs::Path>(smoother_path_topic, 1, true);
-    velocity_pub = nh.advertise<geometry_msgs::Twist>(velocity_topic, 1);
-    // RViz 1.14 has no plain Twist display; publish a TwistStamped twin of the
-    // velocity command for the /cmd_vel_stamped display.
-    velocity_stamped_pub =
-        nh.advertise<geometry_msgs::TwistStamped>(velocity_stamped_topic, 1);
     global_costmap_pub =
         nh.advertise<nav_msgs::OccupancyGrid>(global_costmap_topic, 1, true);
     local_costmap_pub =
@@ -187,14 +189,18 @@ private:
         nh.advertise<std_msgs::String>(recovery_feedback_topic, 1);
     recovery_status_pub =
         nh.advertise<std_msgs::String>(recovery_status_topic, 1, true);
+    navigation_status_pub =
+        nh.advertise<std_msgs::String>(navigation_status_topic, 1);
     spdlog::info(
-        "rviz_viewer publishers: planner_path={} smoother_path={} cmd_vel={} "
+        "rviz_viewer publishers: planner_path={} smoother_path={} "
         "global_costmap={} local_costmap={} planner_goal={} smoother_input={} "
-        "controller_path={} controller_status={} recovery_status={}",
-        planner_path_topic, smoother_path_topic, velocity_topic,
+        "controller_path={} controller_status={} recovery_status={} "
+        "navigation_status={}",
+        planner_path_topic, smoother_path_topic,
         global_costmap_topic, local_costmap_topic, planner_goal_topic,
         smoother_input_path_topic, controller_path_topic,
-        controller_status_topic, recovery_status_topic);
+        controller_status_topic, recovery_status_topic,
+        navigation_status_topic);
   }
 
   void registerCallbacks() {
@@ -261,16 +267,16 @@ private:
                        ayanami::actions::RecoveryResult>& result) {
               publishRecoveryResult(result);
             });
-    cb_velocity_cmd =
-        ayanami::interfaces::NavigationCallbacks::on_velocity_command.subscribe(
-            [this](const ayanami::geometry_msgs::TwistStamped& velocity) {
-              publishVelocityCommand(velocity);
-            });
     cb_costmap_viz =
         ayanami::interfaces::NavigationCallbacks::on_costmap_visualization.subscribe(
             [this](const std::string& name,
                    const ayanami::nav_msgs::OccupancyGrid& map) {
               publishCostmap(name, map);
+            });
+    cb_navigation_result =
+        ayanami::interfaces::NavigationCallbacks::on_navigation_result.subscribe(
+            [this](const ayanami::actions::NavigationResult& result) {
+              publishNavigationResult(result);
             });
   }
 
@@ -287,7 +293,7 @@ private:
     cb_recovery_goal.reset();
     cb_recovery_feedback.reset();
     cb_recovery_result.reset();
-    cb_velocity_cmd.reset();
+    cb_navigation_result.reset();
     cb_costmap_viz.reset();
   }
 
@@ -410,32 +416,28 @@ private:
     recovery_status_pub.publish(msg);
   }
 
-  void publishVelocityCommand(
-      const ayanami::geometry_msgs::TwistStamped& velocity) {
-    g_velocity_pub_count.fetch_add(1);
-    // gazebo_ros_diff_drive (noetic 2.9.3) 只订阅
-    // geometry_msgs/Twist (无 TwistStamped/legacyMode), 故 /cmd_vel 发 Twist。
-    geometry_msgs::Twist twist;
-    twist.linear.x = velocity.twist.linear.x();
-    twist.linear.y = velocity.twist.linear.y();
-    twist.linear.z = velocity.twist.linear.z();
-    twist.angular.x = velocity.twist.angular.x();
-    twist.angular.y = velocity.twist.angular.y();
-    twist.angular.z = velocity.twist.angular.z();
-    velocity_pub.publish(twist);
-    // Twin TwistStamped for RViz's CmdVel display (rviz 1.14 has no plain
-    // geometry_msgs/Twist display).
-    geometry_msgs::TwistStamped twist_stamped;
-    twist_stamped.header.frame_id = "base_footprint";
-    twist_stamped.twist = twist;
-    velocity_stamped_pub.publish(twist_stamped);
+  void publishNavigationResult(
+      const ayanami::actions::NavigationResult& result) {
+    g_navigation_result_pub_count.fetch_add(1);
+    std_msgs::String msg;
+    std::ostringstream oss;
+    oss << "status=" << goalStatusName(result.status)
+        << " failure=" << failureCodeName(result.context.code)
+        << " session=" << result.context.session_id
+        << " plan=" << result.context.plan_version;
+    if (!result.context.message.empty()) {
+      oss << " message='" << result.context.message << "'";
+    }
+    msg.data = oss.str();
+    navigation_status_pub.publish(msg);
   }
 
   void publishCostmap(const std::string& name,
                       const ayanami::nav_msgs::OccupancyGrid& map) {
-    // 帧单一来源: 核心 publishMapsForVisualization 恒以 wrapper 帧
-    // (costmap.global_frame / costmap.local_frame) 填充 frame_id, 此处不再
-    // 用 config_ros 的 map_frame/odom_frame 兜底 (避免双源分叉)。
+    // Single source for frames: the core's publishMapsForVisualization always
+    // fills frame_id with the wrapper frames (costmap.global_frame /
+    // costmap.local_frame); no map_frame/odom_frame fallback from config_ros
+    // here (avoids dual-source divergence).
     nav_msgs::OccupancyGrid grid = toRosOccupancyGrid(map);
     if (name == "local_costmap") {
       g_local_costmap_pub_count.fetch_add(1);
@@ -447,16 +449,14 @@ private:
   }
 
   ros::NodeHandle nh;
-  ros::Publisher planner_path_pub, smoother_path_pub, velocity_pub,
+  ros::Publisher planner_path_pub, smoother_path_pub,
       global_costmap_pub, local_costmap_pub, planner_goal_pub,
       planner_feedback_pub, smoother_input_path_pub, smoother_feedback_pub,
       controller_path_pub, controller_feedback_pub, controller_status_pub,
       recovery_goal_pub, recovery_feedback_pub, recovery_status_pub,
-      velocity_stamped_pub;
+      navigation_status_pub;
   std::string planner_path_topic = "/ayanami/planner/path";
   std::string smoother_path_topic = "/ayanami/smoother/path";
-  std::string velocity_topic = "/cmd_vel";
-  std::string velocity_stamped_topic = "/cmd_vel_stamped";
   std::string global_costmap_topic = "/ayanami/global_costmap";
   std::string local_costmap_topic = "/ayanami/local_costmap";
   std::string planner_goal_topic = "/ayanami/planner/goal";
@@ -469,12 +469,14 @@ private:
   std::string recovery_goal_topic = "/ayanami/recovery/goal";
   std::string recovery_feedback_topic = "/ayanami/recovery/feedback";
   std::string recovery_status_topic = "/ayanami/recovery/status";
+  std::string navigation_status_topic = "/ayanami/navigation_status";
   std::mutex last_recovery_mutex;
   std::string last_recovery_id;
   ayanami::CallbackSubscription cb_costmap_viz, cb_get_path, cb_smooth_path,
       cb_velocity_cmd, cb_get_path_goal, cb_get_path_feedback, cb_smooth_goal,
       cb_smooth_feedback, cb_exe_goal, cb_exe_feedback, cb_exe_result,
-      cb_recovery_goal, cb_recovery_feedback, cb_recovery_result;
+      cb_recovery_goal, cb_recovery_feedback, cb_recovery_result,
+      cb_navigation_result;
 };
 
 }  // namespace ayanami_ros
@@ -483,15 +485,12 @@ extern "C" ayanami::ExtensionModule* create_extension_module() {
   return new ayanami_ros::RvizViewer();
 }
 
-// ---- TDD 测试 hook (rvizViewerTest dlopen 后经 dlsym 读) ----
+// ---- TDD test hooks (read via dlsym by rvizViewerTest after dlopen) ----
 extern "C" int rvizViewerPlannerPathPubCount() {
   return ayanami_ros::g_planner_path_pub_count.load();
 }
 extern "C" int rvizViewerSmootherPathPubCount() {
   return ayanami_ros::g_smoother_path_pub_count.load();
-}
-extern "C" int rvizViewerVelocityPubCount() {
-  return ayanami_ros::g_velocity_pub_count.load();
 }
 extern "C" int rvizViewerGlobalCostmapPubCount() {
   return ayanami_ros::g_global_costmap_pub_count.load();
@@ -528,6 +527,9 @@ extern "C" int rvizViewerRecoveryFeedbackPubCount() {
 }
 extern "C" int rvizViewerRecoveryResultPubCount() {
   return ayanami_ros::g_recovery_result_pub_count.load();
+}
+extern "C" int rvizViewerNavigationResultPubCount() {
+  return ayanami_ros::g_navigation_result_pub_count.load();
 }
 extern "C" const char* rvizViewerPlannerPathTopic() {
   return ayanami_ros::g_planner_path_topic.c_str();

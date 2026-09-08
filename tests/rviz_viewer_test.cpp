@@ -1,16 +1,22 @@
-// rviz_viewer ROS extension .so (dlopen → create_extension_module →
-// RvizViewer : ayanami::ExtensionModule)。
+// rviz_viewer ROS extension .so (dlopen -> create_extension_module ->
+// RvizViewer : ayanami::ExtensionModule).
 //
-// 无 roscore 环境 (headless)。用临时 config 目录 (含 config_ros.json, 覆盖 rviz
-// 话题名) + dlopen librviz_viewer.so, 验证:
-// 1. dlopen + create_extension_module + dynamic_cast<ayanami::ExtensionModule>。
-// 2. 构造期 (dlopen 时) 自建 ros::NodeHandle → advertiseTopics (16 publisher)
-// + 注册 15 个 NavigationCallbacks 订阅 (ayanami 全部输出槽位); 扩展自身
-// 不 ros subscribe (输入职责归 AyanamiROS)。
-// 3. 主动 emit NavigationCallbacks 事件 → 对应 publish handler 被调 (经 .so 导出
-// 的计数 hook 证明), 无订阅者时 publish 为 no-op, 无崩。
-// 4. 话题名从 config_ros.json::ayanami_ros 读入 (planner_path_topic 覆盖验证)。
-// 5. ~RvizViewer → 15 个 callback id 全部 remove → 再 emit 计数不再增。
+// roscore-less environment (headless). Uses a temporary config directory
+// (containing config_extensions.json, overriding the rviz topic names) +
+// dlopen librviz_viewer.so to verify:
+// 1. dlopen + create_extension_module + dynamic_cast<ayanami::ExtensionModule>.
+// 2. At construction time (during dlopen) it creates its own ros::NodeHandle ->
+// advertiseTopics (16 publishers) + registers 15 NavigationCallbacks
+// subscriptions (all of ayanami's output slots); the extension itself does no
+// ros subscribe (input duty belongs to AyanamiROS).
+// 3. Actively emitting NavigationCallbacks events -> the corresponding publish
+// handlers are invoked (proven by the counting hooks exported from the .so);
+// publish is a no-op with no subscribers, without crashing.
+// 4. Topic names are read from config_extensions.json::rviz_viewer
+// (planner_path_topic override verified); config_ros.json no longer carries
+// extension output topics.
+// 5. ~RvizViewer -> all 15 callback ids removed -> further emits no longer
+// increase the counts.
 
 #include <dlfcn.h>
 
@@ -48,18 +54,20 @@ std::filesystem::path makeConfigDir() {
   std::filesystem::remove_all(dir);
   writeFile(dir / "config.json",
             "{\n  \"global\": {\n"
-            "    \"config_ros\": \"config_ros.json\"\n"
+            "    \"config_extensions\": \"config_extensions.json\"\n"
             "  }\n}\n");
-  writeFile(dir / "config_ros.json",
-            "{\n  \"ayanami_ros\": {\n"
+  // Single source for extension output topics =
+  // config_extensions.json::rviz_viewer (asuka mode).
+  writeFile(dir / "config_extensions.json",
+            "{\n  \"extensions\": {\n"
+            "    \"loading_extension_modules\": []\n"
+            "  },\n"
+            "  \"rviz_viewer\": {\n"
             "    \"planner_path_topic\": \"/test/rviz/planner/path\",\n"
             "    \"smoother_path_topic\": \"/test/rviz/smoother/path\",\n"
             "    \"cmd_vel_topic\": \"/test/rviz/cmd_vel\",\n"
-            "    \"static_map_topic\": \"/test/rviz/static_map\",\n"
             "    \"global_costmap_topic\": \"/test/rviz/global_costmap\",\n"
-            "    \"local_costmap_topic\": \"/test/rviz/local_costmap\",\n"
-            "    \"map_frame\": \"map\",\n"
-            "    \"odom_frame\": \"odom\"\n"
+            "    \"local_costmap_topic\": \"/test/rviz/local_costmap\"\n"
             "  }\n}\n");
   return dir;
 }
@@ -69,7 +77,8 @@ void initGlobalConfig(const std::filesystem::path& dir) {
   ayanami::GlobalConfig::instance(dir.string(), /*override_path=*/true);
 }
 
-// 从 librviz_viewer.so 读 publish 计数 / 话题名 (dlopen 由 load_module RTLD_GLOBAL)。
+// Reads publish counts / topic names from librviz_viewer.so (dlopen done by
+// load_module with RTLD_GLOBAL).
 int pubCount(const char* symbol) {
   using Getter = int (*)();
   auto getter = reinterpret_cast<Getter>(dlsym(RTLD_DEFAULT, symbol));
@@ -107,10 +116,10 @@ TEST(RvizViewer, dlopenCreateAndRegisterCallbacks) {
   auto viewer = std::dynamic_pointer_cast<ayanami::ExtensionModule>(ext);
   ASSERT_NE(viewer, nullptr);
 
-  // 构造期 advertiseTopics 完成: 计数 hook 均可达 (dlsym 找到, 初值 0)。
+  // advertiseTopics completed at construction: all counting hooks reachable
+  // (found via dlsym, initial value 0).
   EXPECT_GE(pubCount("rvizViewerPlannerPathPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerSmootherPathPubCount"), 0);
-  EXPECT_GE(pubCount("rvizViewerVelocityPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerGlobalCostmapPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerLocalCostmapPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerPlannerGoalPubCount"), 0);
@@ -124,7 +133,8 @@ TEST(RvizViewer, dlopenCreateAndRegisterCallbacks) {
   EXPECT_GE(pubCount("rvizViewerRecoveryFeedbackPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerRecoveryResultPubCount"), 0);
 
-  // 话题名从 config_ros.json::ayanami_ros 读入 (覆盖默认值)。
+  // Topic names read from config_extensions.json::rviz_viewer (overriding the
+  // defaults).
   const char* topic = topicString("rvizViewerPlannerPathTopic");
   ASSERT_NE(topic, nullptr);
   EXPECT_STREQ(topic, "/test/rviz/planner/path");
@@ -136,7 +146,8 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
   auto ext = ayanami::ExtensionModule::load_module(g_rviz_viewer_so);
   ASSERT_NE(ext, nullptr);
 
-  // 主动 emit NavigationCallbacks → 对应 publish handler 被调 ≥1。
+  // Actively emit NavigationCallbacks -> the corresponding publish handler is
+  // invoked at least once.
   ayanami::actions::GoalResult<ayanami::actions::GetPathResult> get_path;
   get_path.status = ayanami::actions::GoalStatus::SUCCEEDED;
   get_path.result.path = makePath();
@@ -150,13 +161,6 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
   const int smoother_before = pubCount("rvizViewerSmootherPathPubCount");
   ayanami::interfaces::NavigationCallbacks::on_smooth_path_result(smooth);
   EXPECT_GE(pubCount("rvizViewerSmootherPathPubCount"), smoother_before + 1);
-
-  ayanami::geometry_msgs::TwistStamped twist;
-  twist.header.frame_id = "odom";
-  twist.twist.linear = Eigen::Vector3d(1.0, 0.0, 0.0);
-  const int velocity_before = pubCount("rvizViewerVelocityPubCount");
-  ayanami::interfaces::NavigationCallbacks::on_velocity_command(twist);
-  EXPECT_GE(pubCount("rvizViewerVelocityPubCount"), velocity_before + 1);
 
   ayanami::nav_msgs::OccupancyGrid grid;
   grid.header.frame_id = "map";
@@ -173,7 +177,7 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
       "local_costmap", grid);
   EXPECT_GE(pubCount("rvizViewerLocalCostmapPubCount"), local_before + 1);
 
-  // 非 SUCCEEDED 的 path 不 publish。
+  // Non-SUCCEEDED paths are not published.
   ayanami::actions::GoalResult<ayanami::actions::GetPathResult> failed;
   failed.status = ayanami::actions::GoalStatus::ABORTED;
   failed.result.path = makePath();
@@ -181,7 +185,8 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
   ayanami::interfaces::NavigationCallbacks::on_get_path_result(failed);
   EXPECT_EQ(pubCount("rvizViewerPlannerPathPubCount"), planner_after);
 
-  // ---- 扩展输出槽位 (扩展): goal/feedback/result 全覆盖 ----
+  // ---- extension output slots (extension): full goal/feedback/result
+  // coverage ----
   ayanami::geometry_msgs::PoseStamped goal_pose =
       ayanami::geometry_msgs::PoseStamped::fromIsometry(
           "map", Eigen::Isometry3d::Identity());
@@ -263,7 +268,8 @@ TEST(RvizViewer, destructorRemovesCallbacks) {
   ayanami::interfaces::NavigationCallbacks::on_get_path_result(get_path);
   ASSERT_GE(pubCount("rvizViewerPlannerPathPubCount"), 1);
 
-  // ~RvizViewer → 15 个 callback id 全部 remove。释放全部 alias 引用触发析构。
+  // ~RvizViewer -> all 15 callback ids removed. Releasing all alias references
+  // triggers the destructor.
   ext.reset();
   ASSERT_EQ(ext, nullptr);
 
@@ -271,7 +277,8 @@ TEST(RvizViewer, destructorRemovesCallbacks) {
   ayanami::interfaces::NavigationCallbacks::on_get_path_result(get_path);
   EXPECT_EQ(pubCount("rvizViewerPlannerPathPubCount"), after_dtor);
 
-  // 扩展槽位同样全部退订: 析构后再 emit on_exe_path_result 计数不再增。
+  // Extension slots are fully unsubscribed as well: emitting
+  // on_exe_path_result after destruction no longer increases the count.
   ayanami::actions::GoalResult<ayanami::actions::ExePathResult> exe_result;
   exe_result.status = ayanami::actions::GoalStatus::SUCCEEDED;
   exe_result.result.reached = true;

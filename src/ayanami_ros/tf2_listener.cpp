@@ -7,8 +7,9 @@ namespace ayanami_ros {
 TF2Listener::TF2Listener(ros::NodeHandle& nh, const std::vector<std::pair<std::string, std::string>>& edges)
 : tf_sync_edges(edges) {
   (void)nh;
-  // spin_thread=true (TransformListener 默认) 在独立线程填 buffer;
-  // 带 timeout 的 lookup 要求 buffer 标记 dedicated thread (tf2_ros 线程注记)。
+  // spin_thread=true (the TransformListener default) feeds the buffer from a
+  // separate thread; lookups with a timeout require the buffer to be marked as
+  // having a dedicated thread (tf2_ros threading note).
   buffer.setUsingDedicatedThread(true);
   listener = std::make_unique<tf2_ros::TransformListener>(buffer);
 }

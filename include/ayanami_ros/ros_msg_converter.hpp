@@ -19,9 +19,12 @@
 
 namespace ayanami_ros {
 
-// Eigen ↔ ROS msgs。header-only inline 实现 (轻便, 无需 .cpp)。
-// Header stamp 双向完整转换: ros::Time ↔ ayanami::Timestamp (纳秒)。
-// 语义对齐以 TF 通语义: ayanami::Timestamp::latest (0ns) ↔ ros::Time(0)。
+// Eigen <-> ROS msgs. Header-only inline implementation (lightweight, no .cpp
+// needed).
+// Header stamps are fully converted both ways: ros::Time <->
+// ayanami::Timestamp (nanoseconds).
+// Semantics aligned with TF conventions: ayanami::Timestamp::latest (0ns) <->
+// ros::Time(0).
 
 namespace detail {
 
@@ -135,7 +138,7 @@ inline nav_msgs::OccupancyGrid toRosOccupancyGrid(const ayanami::nav_msgs::Occup
   return out;
 }
 
-// ---- PointCloud2 (PCL aware: 与传感器 data blob 对齐, 逐字段拷贝) ----
+// ---- PointCloud2 (PCL aware: aligned with the sensor data blob, field-by-field copy) ----
 
 inline ayanami::sensor_msgs::PointCloud2 fromRosPointCloud2(const sensor_msgs::PointCloud2& in) {
   ayanami::sensor_msgs::PointCloud2 out;

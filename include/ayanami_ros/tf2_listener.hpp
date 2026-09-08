@@ -17,48 +17,67 @@
 namespace ayanami_ros {
 
 /**
- * @brief TF2 封装: tf2_ros::Buffer + TransformListener (verbatim)。
+ * @brief TF2 wrapper: tf2_ros::Buffer + TransformListener (verbatim).
  *
- * 构造时建 buffer + listener (spin_thread=true 起专用线程填 buffer), 保存
- * tf_sync_edges (由 config_ros.json 控, 默认 [map→odom, odom→base_link,
- * map→base_link])。lookupTransform 内部 lookupTransform(target, source,
- * stamp, ros::Duration(timeout)) → tf2::transformToEigen → Eigen::Isometry3d,
- * 抛 tf2::TransformException 时返回 false。
+ * The constructor creates the buffer + listener (spin_thread=true starts a
+ * dedicated thread feeding the buffer) and stores tf_sync_edges (controlled by
+ * config_ros.json, default [map->odom, odom->base_link, map->base_link]).
+ * lookupTransform internally does lookupTransform(target, source, stamp,
+ * ros::Duration(timeout)) -> tf2::transformToEigen -> Eigen::Isometry3d, and
+ * returns false when tf2::TransformException is thrown.
  *
- * 时间语义: stamp=ros::Time(0) 表示 latest; TransformStamped 重载同时返回
- * buffer 给出的真实 geometry_msgs::TransformStamped.header.stamp, 供写入
- * TransformStore 时不用 ros::Time::now() 伪造。
+ * Time semantics: stamp=ros::Time(0) means latest; the TransformStamped
+ * overload also returns the real geometry_msgs::TransformStamped.header.stamp
+ * provided by the buffer, so writing into the TransformStore does not need to
+ * fake it with ros::Time::now().
  */
 class TF2Listener {
 public:
   TF2Listener(ros::NodeHandle& nh,
               const std::vector<std::pair<std::string, std::string>>& edges);
 
-  /// @brief 查 source→target 变换; stamp=ros::Time(0) 表示 latest。
-  /// @return true 填 @p out (真实 header.stamp 一并返回), false (timeout 秒内无
-  /// 可用 TF)。
+  /// @brief Looks up the source->target transform; stamp=ros::Time(0) means
+  /// latest.
+  /// @return true fills @p out (the real header.stamp is returned as well),
+  /// false (no TF available within timeout seconds).
   bool lookupTransform(const std::string& target, const std::string& source,
                         const ros::Time& stamp,
                         geometry_msgs::TransformStamped& out,
                         double timeout = 0.0);
 
-  /// @brief 同上的 Eigen 版本 (内部委托 TransformStamped 重载)。
-  /// @return true 填 @p out, false (timeout 秒内无可用 TF)。
+  /// @brief Eigen version of the above (delegates internally to the
+  /// TransformStamped overload).
+  /// @return true fills @p out, false (no TF available within timeout seconds).
   bool lookupTransform(const std::string& target, const std::string& source,
                         const ros::Time& stamp, Eigen::Isometry3d& out,
                         double timeout = 0.0);
 
-  /// @brief 配置的 tf sync 边集 (target, source) 列表。
+  /// @brief List of configured tf sync edges (target, source).
   const std::vector<std::pair<std::string, std::string>>& tfSyncEdges() const {
     return tf_sync_edges;
   }
 
-  /// @brief ROS TF 树健康诊断 (缺边排障): 边 (target←source) 当前是否可解析。
+  /// @brief Synchronously injects one /tf transform into the internal tf2
+  /// buffer.
+  ///
+  /// TransformListener inserts into the buffer asynchronously (separate
+  /// thread), so the event-driven /tf callback may run before that insertion --
+  /// the lookup would read a stale sample and skip that frame forever. The
+  /// callback first writes the message into the buffer through this method and
+  /// only then queries, removing the race (a duplicate insertion of the same
+  /// value after the Listener is idempotent).
+  void setTransform(const geometry_msgs::TransformStamped& transform) {
+    buffer.setTransform(transform, "ayanami_event_sync", /*is_static=*/false);
+  }
+
+  /// @brief ROS TF tree health diagnostics (missing-edge troubleshooting):
+  /// whether edge (target<-source) is currently resolvable.
   bool canTransform(const std::string& target, const std::string& source,
                     double timeout = 0.0) const;
 
-  /// @brief ROS TF 树中现有帧列表 (含父子关系), 格式:
-  /// "Frame base_link exists with parent base_footprint"。
+  /// @brief List of frames currently present in the ROS TF tree (with
+  /// parent-child relations), format:
+  /// "Frame base_link exists with parent base_footprint".
   std::string framesAsString() const;
 
 private:

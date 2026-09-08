@@ -1,14 +1,17 @@
-// AyanamiROS 构造 + 加载链 TDD 测试。
+// AyanamiROS construction + loading-chain TDD tests.
 //
-// 无 roscore 环境 (headless)。用临时 config 目录 (全套 M1 配置 + config_ros.json)
-// + 真实 rviz_viewer 扩展 (libayanami_rviz_viewer.so), 验证:
-// 1. AyanamiROS 构造按 顺序完成: GlobalConfig → loadExtensionModules
-// → loadNavigationPlugin (dlopen libayanami_costmap_navigation.so +
-// initialize + start) → subscribeTopics。
-// 2. 扩展先于 navigation->start 注册 : rviz_viewer 构造期注册的
-// on_costmap_visualization 订阅必须收到 start 的首波可视化 emit
-// (通过 rviz_viewer .so 导出的 extern "C" 计数查询)。
-// 3. extension_modules / navigation_plugin 成员就位; start/stop 无崩。
+// roscore-less environment (headless). Uses a temporary config directory (full
+// M1 config set + config_ros.json) + the real rviz_viewer extension
+// (libayanami_rviz_viewer.so) to verify:
+// 1. AyanamiROS construction completes in order: GlobalConfig ->
+// loadExtensionModules -> loadNavigationPlugin (dlopen
+// libayanami_costmap_navigation.so + initialize + start) -> subscribeTopics.
+// 2. Extensions register before navigation->start: the
+// on_costmap_visualization subscription registered during rviz_viewer
+// construction must receive start's first wave of visualization emits
+// (via the extern "C" counting queries exported by the rviz_viewer .so).
+// 3. extension_modules / navigation_plugin members in place; start/stop
+// without crashing.
 
 #include <dlfcn.h>
 
@@ -52,7 +55,7 @@ std::string plugin_json(const std::string& module, const std::string& name,
          "\", \"so_name\": \"" + so_name + "\"}";
 }
 
-// 静态地图 PGM (P2 ASCII, 全 FREE)。
+// Static map PGM (P2 ASCII, all FREE).
 std::string free_pgm(int width, int height, int max_value) {
   std::string content = "P2\n" + std::to_string(width) + " " +
                         std::to_string(height) + "\n" +
@@ -64,8 +67,10 @@ std::string free_pgm(int width, int height, int max_value) {
   return content;
 }
 
-// 全套 M1 配置 (对标 , headless_e2e 结构) + config_ros.json。
-// 插件 so 用裸名: catkin 测试环境 LD_LIBRARY_PATH 已含 devel/lib。
+// Full M1 config set (modeled on the headless_e2e structure) +
+// config_ros.json.
+// Plugin .so files use bare names: the catkin test environment's
+// LD_LIBRARY_PATH already contains devel/lib.
 std::filesystem::path makeConfigDir() {
   const auto dir =
       std::filesystem::temp_directory_path() / "ayanami_ros_load_test";
@@ -136,7 +141,8 @@ std::filesystem::path makeConfigDir() {
              "  }\n}\n");
 
   {
-    // costmap 参数并入 costmap_navigation.json (原 costmap.json 移除)。
+    // costmap parameters merged into costmap_navigation.json (the original
+    // costmap.json was removed).
     std::ofstream nav(dir / "costmap_navigation.json", std::ios::app);
     nav << ",\n  \"costmap\": {\n"
         << "    \"global_frame\": \"map\",\n"
@@ -213,8 +219,13 @@ std::filesystem::path makeConfigDir() {
              "    \"map_frame\": \"map\",\n"
              "    \"odom_frame\": \"odom\",\n"
              "    \"robot_frame\": \"base_footprint\",\n"
-             "    \"tf_sync_rate\": 50.0,\n"
-              "    \"extension_modules\": [\"" +
+             "    \"tf_sync_rate\": 50.0\n"
+             "  }\n}\n");
+  // Single source for the extension manifest = config_extensions.json (asuka
+  // mode).
+  writeFile(dir / "config_extensions.json",
+            "{\n  \"extensions\": {\n"
+            "    \"loading_extension_modules\": [\"" +
                  std::string(g_rviz_viewer_so) +
                  "\"]\n"
                  "  }\n}\n");
@@ -222,8 +233,10 @@ std::filesystem::path makeConfigDir() {
   return dir;
 }
 
-// 从 rviz_viewer .so 读 costmap 可视化 publish 计数 (dlopen 已由 AyanamiROS
-// 以 RTLD_GLOBAL 完成; 用真实输出扩展验证加载顺序, 不再单独维护 stub)。
+// Reads the costmap visualization publish count from the rviz_viewer .so
+// (the dlopen was already done by AyanamiROS with RTLD_GLOBAL; uses the real
+// output extension to verify load ordering instead of maintaining a separate
+// stub).
 int rvizViewerCostmapPubCount() {
   using Getter = int (*)();
   auto getter = reinterpret_cast<Getter>(dlsym(RTLD_DEFAULT,
@@ -237,28 +250,30 @@ int rvizViewerCostmapPubCount() {
 TEST(AyanamiROS, initLoadExtensionsBeforeNavigationPlugin) {
   const auto config_dir = makeConfigDir();
   ros::NodeHandle nh("~");
-  // 无 roscore: nh.setParam 会失败; 走 AyanamiROS 的 env fallback。
+  // No roscore: nh.setParam would fail; use AyanamiROS's env fallback.
   setenv("AYANAMI_CONFIG_PATH", config_dir.string().c_str(), 1);
 
   ayanami_ros::AyanamiROS node(nh);
 
-  // 1) 扩展模块加载成功 (libayanami_rviz_viewer.so dlopen + create_extension_module)。
+  // 1) Extension modules loaded (libayanami_rviz_viewer.so dlopen +
+  // create_extension_module).
   ASSERT_EQ(node.extensionModules().size(), 1u);
 
-  // 2) 核心导航宿主插件加载成功 (dlopen libayanami_costmap_navigation.so +
-  // initialize + start)。
+  // 2) Core navigation host plugin loaded (dlopen
+  // libayanami_costmap_navigation.so + initialize + start).
   ASSERT_NE(node.navigationPlugin(), nullptr);
 
-  // 3) 加载顺序 : 扩展在 navigation->start 前注册。构造期
-  // loadNavigationPlugin→start 会 emit on_costmap_visualization; 若顺序
-  // 错误 (nav 先于 ext), rviz_viewer 订阅未注册, 计数恒 0。此处计数 > 0 即证明
-  // 扩展构造先于 navigation start 完成。
+  // 3) Load ordering: extensions register before navigation->start. The
+  // constructor's loadNavigationPlugin->start emits on_costmap_visualization;
+  // if the order is wrong (nav before ext), rviz_viewer's subscription is not
+  // registered and the count stays 0. A count > 0 here proves extension
+  // construction completed before navigation start.
   const int emits = rvizViewerCostmapPubCount();
   EXPECT_GT(emits, 0) <<
       "extension 订阅应在 navigation_plugin->start() 前注册";
   EXPECT_EQ(node.configPath(), config_dir.string());
 
-  // 4) start 进 loop, stop join; 不挂, 无 segfault。
+  // 4) start enters the loop, stop joins; no hang, no segfault.
   EXPECT_NO_THROW({
     node.start();
     ros::WallDuration(0.15).sleep();
@@ -268,9 +283,9 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationPlugin) {
 
 TEST(AyanamiROS, emptyExtensionList) {
   const auto config_dir = makeConfigDir();
-  writeFile(config_dir / "config_ros.json",
-             "{\n  \"ayanami_ros\": {\n"
-             "    \"extension_modules\": []\n"
+  writeFile(config_dir / "config_extensions.json",
+             "{\n  \"extensions\": {\n"
+             "    \"loading_extension_modules\": []\n"
              "  }\n}\n");
   ros::NodeHandle nh("~");
   setenv("AYANAMI_CONFIG_PATH", config_dir.string().c_str(), 1);
@@ -296,8 +311,9 @@ ayanami::geometry_msgs::PoseStamped makeAyaPose(double x, double y) {
 
 }  // namespace
 
-// latest-wins goal 邮箱 : ROS 回调侧 submitGoal 只覆写 pending_goal
-// (不排队), loop 侧 drainPendingGoal 每次最多投递当前最新一条再置空。
+// latest-wins goal mailbox: the ROS callback side's submitGoal only overwrites
+// pending_goal (no queueing); the loop side's drainPendingGoal delivers at most
+// the current latest one each time and then clears it.
 TEST(AyanamiROS, goalMailboxIsLatestWinsAndDrainsAtMostLatest) {
   const auto config_dir = makeConfigDir();
   ros::NodeHandle nh("~");
@@ -306,25 +322,28 @@ TEST(AyanamiROS, goalMailboxIsLatestWinsAndDrainsAtMostLatest) {
   ayanami_ros::AyanamiROS node(nh);
   ASSERT_NE(node.navigationPlugin(), nullptr);
 
-  // 两次 submitGoal -> 邮箱只剩最新一条 (latest wins, 不排队)。
+  // Two submitGoal calls -> only the latest one remains in the mailbox
+  // (latest wins, no queueing).
   node.submitGoal(makeAyaPose(1.0, 2.0));
   node.submitGoal(makeAyaPose(3.0, 4.0));
   EXPECT_TRUE(node.hasPendingGoal());
 
-  // drain 一次只投递当前最新 (返回 true), 邮箱随即清空; 再 drain 无 goal。
+  // One drain delivers only the current latest (returns true) and empties the
+  // mailbox; a second drain finds no goal.
   EXPECT_TRUE(node.drainPendingGoal());
   EXPECT_FALSE(node.hasPendingGoal());
   EXPECT_FALSE(node.drainPendingGoal());
 
-  // 空提交逐个 drain 不产生额外投递。
+  // Draining one-by-one after empty submits produces no extra deliveries.
   node.drainPendingGoal();
   EXPECT_FALSE(node.hasPendingGoal());
 
   node.stop();
 }
 
-// odom 速度直写全局 RobotStateController: 控制器 execution 读到真实最新速度
-// (不再是硬编码零速度)。
+// odom velocity written directly into the global RobotStateController: the
+// controller execution reads the real latest velocity (no longer a hardcoded
+// zero velocity).
 TEST(AyanamiROS, odomVelocityWiredIntoRobotStateController) {
   const auto config_dir = makeConfigDir();
   ros::NodeHandle nh("~");
@@ -334,8 +353,9 @@ TEST(AyanamiROS, odomVelocityWiredIntoRobotStateController) {
   ASSERT_NE(node.navigationPlugin(), nullptr);
   auto& rsc = ayanami::components::RobotStateController::instance();
   rsc.resetVelocity();
-  // AyanamiROS 构造期间 navigation_plugin->initialize 已用 config frame
-  // (map/odom/base_footprint) 初始化 singleton。
+  // During AyanamiROS construction, navigation_plugin->initialize already
+  // initialized the singleton with the config frames
+  // (map/odom/base_footprint).
   EXPECT_EQ(rsc.getRobotFrame(), "base_footprint");
 
   ayanami::geometry_msgs::TwistStamped twist;
@@ -352,8 +372,10 @@ TEST(AyanamiROS, odomVelocityWiredIntoRobotStateController) {
   node.stop();
 }
 
-// 障碍观测输入不再走全局旁路槽: ROS 回调直递宿主 AbstractNavigation 的
-// setPointcloud/setLaserScan (输入/输出分层), 空消息静默不崩。
+// Obstacle observation input no longer goes through global bypass slots: ROS
+// callbacks deliver directly to the host AbstractNavigation's
+// setPointcloud/setLaserScan (input/output layering); empty messages are
+// silently ignored without crashing.
 TEST(AyanamiROS, obstacleInputWiredToHostPluginWithoutCrash) {
   const auto config_dir = makeConfigDir();
   ros::NodeHandle nh("~");
@@ -363,7 +385,8 @@ TEST(AyanamiROS, obstacleInputWiredToHostPluginWithoutCrash) {
   auto* plugin = node.navigationPlugin().get();
   ASSERT_NE(plugin, nullptr);
 
-  // 空 pointcloud / laserscan -> 落图管线提前返回, 不崩。
+  // Empty pointcloud / laserscan -> the rasterization pipeline returns early,
+  // no crash.
   ayanami::sensor_msgs::PointCloud2 cloud;
   ayanami::sensor_msgs::LaserScan scan;
   plugin->setPointcloud(cloud);

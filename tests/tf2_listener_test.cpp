@@ -1,11 +1,13 @@
-// TF2Listener TDD 测试。
+// TF2Listener TDD tests.
 //
-// 两条用例:
-// 1. 无 roscore / 空 buffer: buffer.lookupTransform 抛 tf2::TransformException
-// → TF2Listener::lookupTransform 返回 false (catch 分支)。
-// 2. 真 roscore: 用 tf2_ros::StaticBroadcaster 发布一个静态 transform, 等待
-// latched /tf_static 送达 listener 的 dedicated thread 后 lookup, 验证
-// 返回非零、非单位阵的 Eigen::Isometry3d。无 master 时 GTEST_SKIP。
+// Two cases:
+// 1. No roscore / empty buffer: buffer.lookupTransform throws
+// tf2::TransformException -> TF2Listener::lookupTransform returns false (catch
+// branch).
+// 2. Real roscore: publish a static transform with tf2_ros::StaticBroadcaster,
+// wait for the latched /tf_static to reach the listener's dedicated thread,
+// then look up and verify a non-zero, non-identity Eigen::Isometry3d is
+// returned. GTEST_SKIP when there is no master.
 
 #include <Eigen/Geometry>
 
@@ -27,8 +29,9 @@ TEST(TF2Listener, lookupTransformEmptyReturnsFalse) {
       nh, {{"map", "odom"}, {"odom", "base_link"}, {"map", "base_link"}});
 
   Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
-  // 无 roscore: buffer 恒空, lookupTransform(..., Duration(0)) 立即抛
-  // tf2::TransformException (LookupException) → lookupTransform 吞异常返 false。
+  // No roscore: the buffer stays empty; lookupTransform(..., Duration(0))
+  // immediately throws tf2::TransformException (LookupException) ->
+  // lookupTransform swallows the exception and returns false.
   EXPECT_FALSE(listener.lookupTransform("map", "odom", ros::Time(0), out));
 
   geometry_msgs::TransformStamped ts;
@@ -43,7 +46,8 @@ TEST(TF2Listener, lookupStaticBroadcastTransform) {
   ros::NodeHandle nh("~");
   ayanami_ros::TF2Listener listener(nh, {{"map", "odom"}});
 
-  // 动态 /tf 广播 (odom 意义上的真实 TF): header.stamp 标注该帧时刻。
+  // Dynamic /tf broadcast (a real TF in the odom sense): header.stamp marks
+  // the frame's time.
   tf2_ros::TransformBroadcaster broadcaster;
   geometry_msgs::TransformStamped ts;
   ts.header.stamp = ros::Time::now();
@@ -58,22 +62,26 @@ TEST(TF2Listener, lookupStaticBroadcastTransform) {
   ts.transform.rotation.w = 1.0;
   broadcaster.sendTransform(ts);
 
-  // 等待 /tf 送达 TransformListener 的 dedicated thread 并写入 buffer。
+  // Wait for /tf to reach the TransformListener's dedicated thread and be
+  // written into the buffer.
   ros::WallDuration(1.0).sleep();
 
-  // TransformStamped 重载: 一块拿回 TF2 buffer 的真实 header.stamp (供
-  // TransformStore 写入, 不再用 ros::Time::now 伪造)。Time(0)=latest →
-  // 返回最新动态帧, stamp 应为发布时刻。
+  // TransformStamped overload: also fetches back the TF2 buffer's real
+  // header.stamp (for TransformStore writes, no longer faked with
+  // ros::Time::now). Time(0)=latest -> returns the newest dynamic frame; the
+  // stamp should be the publication time.
   geometry_msgs::TransformStamped ts_out;
   ASSERT_TRUE(
       listener.lookupTransform("map", "odom", ros::Time(0), ts_out, 2.0));
   EXPECT_NEAR(ts_out.header.stamp.toSec(), ts.header.stamp.toSec(), 0.1);
   EXPECT_NEAR(ts_out.transform.translation.x, 1.0, 1e-6);
 
-  // Eigen 重载仍可用, 且平移 == 发布的 (1, 2, 3)。
+  // The Eigen overload still works, and the translation equals the published
+  // (1, 2, 3).
   Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
   ASSERT_TRUE(listener.lookupTransform("map", "odom", ros::Time(0), out, 2.0));
-  // 验证非零非单位阵, 且平移 == 发布的 (1, 2, 3)。
+  // Verify non-zero, non-identity, and translation equal to the published
+  // (1, 2, 3).
   EXPECT_FALSE(out.isApprox(Eigen::Isometry3d::Identity(), 1e-6));
   EXPECT_GT(out.translation().norm(), 0.0);
   EXPECT_NEAR(out.translation().x(), 1.0, 1e-6);

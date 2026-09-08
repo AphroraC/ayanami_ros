@@ -19,9 +19,10 @@
 namespace ayanami_ros {
 namespace {
 
-// 经 Config API (config_ros.json) 读取 tf_sync_edges 列表 [[target, source], ...]
-// (§4.4)。每条边须正好 2 项 (size==2), 否则跳过; 列表缺失/为空时用
-// 配置 map_frame/odom_frame/robot_frame 构造默认三条边。
+// Reads the tf_sync_edges list [[target, source], ...] via the Config API
+// (config_ros.json) (§4.4). Each edge must have exactly 2 items (size==2),
+// otherwise it is skipped; when the list is missing/empty, three default edges
+// are built from the configured map_frame/odom_frame/robot_frame.
 std::vector<std::pair<std::string, std::string>> readTfSyncEdges(const std::string& config_ros_path) {
   ayanami::Config config_ros(config_ros_path);
   const std::string kSec = "ayanami_ros";
@@ -39,7 +40,7 @@ std::vector<std::pair<std::string, std::string>> readTfSyncEdges(const std::stri
     edges.emplace_back(edge[0], edge[1]);
   }
   if (edges.empty()) {
-    // 默认: map→odom, odom→base_link, map→base_link。
+    // Default: map->odom, odom->base_link, map->base_link.
     edges = {{map_frame, odom_frame}, {odom_frame, robot_frame}, {map_frame, robot_frame}};
   }
   return edges;
@@ -57,7 +58,8 @@ std::set<std::pair<std::string, std::string>> readTfStaticEdges(const std::strin
   return edges;
 }
 
-// 解析 config_path (member init list 用, 懒求值): param → env → package。
+// Resolves config_path (used in the member init list, lazily evaluated):
+// param -> env -> package.
 std::string resolveConfigPath(const ros::NodeHandle& nh) {
   std::string path;
   nh.param<std::string>("config_path", path, "");
@@ -76,9 +78,10 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   tf_listener(nh, readTfSyncEdges(config_path + "/config_ros.json")),
   configured_static_edges(readTfStaticEdges(config_path + "/config_ros.json")),
   navigation_so_name("libayanami_costmap_navigation.so") {
-  // verbatim 顺序。
-  // 注意: 默认值里 ros::package::getPath 只有在 param 缺失时才求值 (避免
-  // 无 roscore 测试环境触发 rospack 的 tinyxml2 符号冲突 / roscore 依赖)。
+  // verbatim ordering.
+  // Note: in the default values, ros::package::getPath is only evaluated when
+  // the param is missing (avoids triggering rospack's tinyxml2 symbol conflict
+  // / roscore dependency in roscore-less test environments).
   ayanami::GlobalConfig::instance(config_path, /*override_path=*/true);
   ayanami::configureLogging();
   ayanami::Config config_ros(ayanami::GlobalConfig::getConfigPath("config_ros"));
@@ -91,9 +94,10 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   odom_frame = config_ros.param<std::string>("ayanami_ros", "odom_frame", "odom");
   robot_frame = config_ros.param<std::string>("ayanami_ros", "robot_frame", "base_footprint");
   tf_sync_rate = config_ros.param<double>("ayanami_ros", "tf_sync_rate", 50.0);
- // tf_cache_duration: TransformStore 动态边按戳回溯窗口 (秒, 默认 10s 对齐
- // tf2 DEFAULT_MAX_STORAGE_TIME)。必须在任何 TF 写入之前配置 (本构造函数
- // 先于 loadNavigationPlugin/start, 此处是唯一的合法配置点)。
+ // tf_cache_duration: TransformStore dynamic-edge lookback window by stamp
+ // (seconds, default 10s aligned with tf2 DEFAULT_MAX_STORAGE_TIME). Must be
+ // configured before any TF write (this constructor runs before
+ // loadNavigationPlugin/start, so this is the only valid configuration point).
   const double tf_cache_duration =
       config_ros.param<double>("ayanami_ros", "tf_cache_duration", 10.0);
   ayanami::interfaces::TransformStore::instance().configureCacheDuration(
@@ -104,9 +108,10 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
       "ayanami_ros", "localization_clear_pos_threshold", 2.0);
   navigation_so_name = config_ros.param<std::string>("ayanami_ros", "navigation_so_name", navigation_so_name);
 
-  // 顺序关键 : 扩展必须先于 navigation_plugin->start 注册其
-  // NavigationCallbacks 订阅, 否则启动期第一波可视化 emit 被错过。
-  loadExtensionModules(config_ros);
+  // Order-critical: extensions must register their NavigationCallbacks
+  // subscriptions before navigation_plugin->start, otherwise the first wave of
+  // startup visualization emits is missed.
+  loadExtensionModules();
   loadNavigationPlugin(config_ros);
   subscribeTopics();
 
@@ -134,13 +139,27 @@ void AyanamiROS::stop() {
   if (loop_thread.joinable()) {
     loop_thread.join();
   }
+  tf_queue_.disable();
+  if (tf_queue_thread_.joinable()) {
+    tf_queue_thread_.join();
+  }
+  tf_queue_.clear();
   if (navigation_plugin) {
     navigation_plugin->stop();
   }
 }
 
-void AyanamiROS::loadExtensionModules(const ayanami::Config& config_ros) {
-  const auto modules = config_ros.param<std::vector<std::string>>("ayanami_ros", "extension_modules", {});
+void AyanamiROS::loadExtensionModules() {
+  // Single source for the extension manifest =
+  // config_extensions.json::extensions.loading_extension_modules (asuka mode);
+  // each extension reads its own parameters from its same-named section (e.g.
+  // rviz_viewer).
+  // config_ros.json only carries the ROS input boundary and no longer holds
+  // extension_modules.
+  const ayanami::Config extensions_config(
+      ayanami::GlobalConfig::getConfigPath("config_extensions"));
+  const auto modules = extensions_config.param<std::vector<std::string>>(
+      "extensions", "loading_extension_modules", {});
   for (const auto& module : modules) {
     spdlog::info("load ayanami_ros extension module {}", module);
     auto ext = ayanami::ExtensionModule::load_module(module);
@@ -155,8 +174,8 @@ void AyanamiROS::loadExtensionModules(const ayanami::Config& config_ros) {
 void AyanamiROS::loadNavigationPlugin(const ayanami::Config& config_ros) {
   (void)config_ros;
   spdlog::info("load ayanami navigation plugin {}", navigation_so_name);
-  // 公共工厂装载 (4): ExtensionModule::load_module →
-  // 类型化 dynamic_pointer_cast<AbstractNavigation> (所有权共享)。
+  // Common factory loading (4): ExtensionModule::load_module ->
+  // typed dynamic_pointer_cast<AbstractNavigation> (shared ownership).
   auto ext = ayanami::ExtensionModule::load_module(navigation_so_name);
   if (!ext) {
     throw std::runtime_error("Failed to load ayanami navigation plugin: " + navigation_so_name);
@@ -186,6 +205,23 @@ void AyanamiROS::subscribeTopics() {
     goal_sub = nh.subscribe(goal_topic, 1, &AyanamiROS::goalCallback, this);
     spdlog::info("subscribe navigation goal topic={}", goal_topic);
   }
+
+  // Event-driven TF sync: every /tf message immediately triggers a full-edge
+  // sync (dedicated callback queue + thread, bypassing the loop's
+  // ros::spinOnce -- otherwise the callback rate is clamped by the 50Hz
+  // polling ceiling).
+  // The 50Hz loop sync is kept as a fallback (covers /tf_static edges and
+  // extreme message-loss scenarios).
+  tf_nh_ = ros::NodeHandle();
+  tf_nh_.setCallbackQueue(&tf_queue_);
+  tf_sub_ = tf_nh_.subscribe("/tf", 200, &AyanamiROS::tfCallback, this,
+                             ros::TransportHints().tcpNoDelay());
+  tf_queue_thread_ = std::thread([this] {
+    while (ros::ok() && !kill_switch.load()) {
+      tf_queue_.callAvailable(ros::WallDuration(0.0005));
+    }
+  });
+  spdlog::info("subscribe /tf for event-driven transform sync");
 }
 
 void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
@@ -194,14 +230,15 @@ void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
     msg->header.frame_id,
     msg->pose.position.x,
     msg->pose.position.y);
-  // ROS 回调只转换 + 邮箱覆写 (latest wins); 实际下发到导航插件由 loop 线程
-  // drainPendingGoal 完成 (不阻塞 ROS 回调线程)。
+  // The ROS callback only converts + overwrites the mailbox (latest wins); the
+  // actual dispatch to the navigation plugin is done by the loop thread's
+  // drainPendingGoal (does not block the ROS callback thread).
   submitGoal(fromRosPose(*msg));
 }
 
 void AyanamiROS::submitGoal(const ayanami::geometry_msgs::PoseStamped& goal) {
   std::lock_guard<std::mutex> lock(goal_mutex);
-  pending_goal = goal;  // 最新覆盖旧待发 goal (latest wins, 不排队)
+  pending_goal = goal;  // newest overwrites the older pending goal (latest wins, no queueing)
 }
 
 bool AyanamiROS::drainPendingGoal() {
@@ -235,16 +272,35 @@ void AyanamiROS::setTransform(const std::string& parent,
 }
 
 void AyanamiROS::setOdometry(const ayanami::geometry_msgs::TwistStamped& twist) {
-  // 直写核心 RobotStateController (核心 controller execution 读取最新速度;
-  // 位姿仍由核心侧经 TF 查询)。
+  // Writes directly into the core RobotStateController (core controller
+  // execution reads the latest velocity; pose is still queried via TF on the
+  // core side).
   ayanami::components::RobotStateController::instance().setOdometry(twist);
 }
 
+void AyanamiROS::tfCallback(const tf2_msgs::TFMessage::ConstPtr& msg) {
+  if (kill_switch.load()) {
+    return;
+  }
+  // First inject the messages into the buffer synchronously (removing the
+  // race with TransformListener's asynchronous insertion: otherwise this
+  // callback might run before the insertion, read a stale sample, and skip the
+  // frame forever), then trigger the sync.
+  // syncTransformsToCore serializes internally with sync_mutex_; no lock is
+  // needed here.
+  for (const auto& transform : msg->transforms) {
+    tf_listener.setTransform(transform);
+  }
+  syncTransformsToCore(ros::Time(0), 0.0);
+}
+
 void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
- // Populate the core TF buffer before delivering: 优先按传感器 header.stamp
- // 同步 (ROS TF buffer 自带缓存可插值出传感器时刻的边变换, 写入精确样本,
- // 使核心障碍落图的按戳查询可命中); 戳超前 ROS buffer 最新样本等失败场景
- // 回退 latest。timeout=0: 不阻塞回调线程。
+ // Populate the core TF buffer before delivering: prefer syncing at the
+ // sensor's header.stamp (the ROS TF buffer's own cache can interpolate the
+ // edge transforms at the sensor time and write exact samples, so the core's
+ // stamp-based obstacle lookups can hit); on failures such as a stamp ahead of
+ // the ROS buffer's newest sample, fall back to latest. timeout=0: the callback
+ // thread is never blocked.
   const ros::Time sensor_stamp = detail::toRosTime(cloud.header.stamp);
   if (!sensor_stamp.isZero()) {
     syncTransformsToCore(sensor_stamp, 0.0);
@@ -253,7 +309,8 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
   if (!navigation_plugin) {
     return;
   }
-  // 障碍观测输入直递宿主插件 (不走全局旁路槽, 输出/观测分层纪律)。
+  // Obstacle observation input delivered directly to the host plugin (not via
+  // global bypass slots; input/output layering discipline).
   navigation_plugin->setPointcloud(cloud);
 }
 
@@ -270,8 +327,9 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
 }
 
 void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
-  // ros_msg_converter 统一转换 ; 回调只转换, 核心边界经
-  // submitSensor (TF 预同步 + 直递宿主)。
+  // Conversion goes uniformly through ros_msg_converter; the callback only
+  // converts, and the core boundary is submitSensor (TF pre-sync + direct
+  // delivery to the host).
   if (!msg) {
     return;
   }
@@ -297,19 +355,27 @@ void AyanamiROS::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
 }
 
 void AyanamiROS::syncTransformsToCore() {
-  // + (时间语义): 真实 TF2Listener 接入 。
-  // 对 tf_sync_edges 每条边 lookupTransform(target, source, ros::Time(0))
-  // → TransformStamped → Eigen::Isometry3d → TransformStore::setTransform。
-  // stamp 用 TF2 buffer 返回的真实 TransformStamped.header.stamp (传感器/TF
-  // 发布时刻), 不再用 ros::Time::now 伪造; lookup 用 Time(0) 即 latest。
-  // timeout 必须为 0: tf2_ros 的带 timeout 等待以 ros::Time::now (sim time)
-  // 计时, /clock 停摆 (llvmpipe/物理卡顿) 时会无限阻塞 50Hz 同步循环 —— 循环
-  // 一旦阻塞, 扫描落图/滚动窗口/目标下发全部冻结 (实测卡死根因之一)。缺边由
-  // checkTfHealth + 同步缺边诊断兜底, 下一周期重试即可。
+  // + (time semantics): real TF2Listener wired in.
+  // For each edge in tf_sync_edges: lookupTransform(target, source,
+  // ros::Time(0)) -> TransformStamped -> Eigen::Isometry3d ->
+  // TransformStore::setTransform.
+  // The stamp is the real TransformStamped.header.stamp returned by the TF2
+  // buffer (sensor/TF publication time), no longer faked with ros::Time::now;
+  // the lookup uses Time(0), i.e. latest.
+  // timeout must be 0: tf2_ros's wait-with-timeout is clocked by ros::Time::now
+  // (sim time); when /clock stalls (llvmpipe/physics hiccups) it would block
+  // the 50Hz sync loop forever -- once the loop blocks, scan rasterization /
+  // rolling window / goal dispatch all freeze (one measured root cause of
+  // hangs). Missing edges are covered by checkTfHealth + the sync missing-edge
+  // diagnostics; the next cycle simply retries.
   syncTransformsToCore(ros::Time(0), 0.0);
 }
 
 void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
+  // tf thread / loop thread / sensor callbacks may enter concurrently;
+  // serialization protects the tf_edge_* intermediate state and the downstream
+  // writer's ordering assumptions.
+  std::lock_guard<std::mutex> sync_lock(sync_mutex_);
   const auto now = std::chrono::steady_clock::now();
   for (const auto& edge : tf_listener.tfSyncEdges()) {
     const std::string& target = edge.first;
@@ -333,22 +399,26 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
         is_static = inserted.first->second;
       }
       auto core_stamp = detail::fromRosTime(tf_msg.header.stamp);
- // 未来戳钳位: 定位层会按 transform_tolerance 把 map->odom 戳写到未来
- // (实测 AMCL tolerance=0.5 → +0.5s)。TransformStore 的 500ms 戳窗被未来
- // 样本占据后, 传感器戳查询反而落在窗口之前全部失败。钳位到当前时钟,
- // 让戳序列贴近真实时刻。
+ // Future-stamp clamping: the localization layer writes the map->odom stamp
+ // into the future by transform_tolerance (measured AMCL tolerance=0.5 ->
+ // +0.5s). Once TransformStore's 500ms stamp window is occupied by future
+ // samples, sensor-stamp queries land before the window and all fail. Clamp to
+ // the current clock so the stamp sequence stays close to real time.
       {
         const auto now_stamp = detail::fromRosTime(ros::Time::now());
         if (core_stamp.count() > now_stamp.count()) {
           core_stamp = now_stamp;
         }
       }
- // 注: 原 tf_time_offset 戳前移补丁已随 fast_tf 可配置回溯窗口退役
- // (tf_cache_duration), 动态边写入真实 header.stamp。
+ // Note: the old tf_time_offset stamp-shift patch was retired along with
+ // fast_tf's configurable lookback window (tf_cache_duration); dynamic edges
+ // now write the real header.stamp.
       const Eigen::Isometry3d edge_tf = tf2::transformToEigen(tf_msg);
       setTransform(target, source, core_stamp, edge_tf, is_static);
-      // 全局动态图重建触发 (仅 odom<-base_footprint 动态边): 累计机器人
-      // 旋转/平移, 超阈值即清空全局动态层 (见 hpp 注释)。
+      // Global dynamic map rebuild trigger (only the odom<-base_footprint
+      // dynamic edge): accumulate robot rotation/translation and clear the
+      // global dynamic layer once the threshold is exceeded (see the hpp
+      // comment).
       if (!is_static && target == odom_frame && source == robot_frame) {
         std::lock_guard<std::mutex> jump_lock(localization_jump_mutex);
         const Eigen::Vector3d delta =
@@ -381,9 +451,13 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
         }
       }
     } else {
-      // 持续缺边诊断 (只由 loop 的低频路径输出; 传感器回调 timeout=0 只快速
-      // 探活, 不在这里阻塞)。边连续 ≥2s 不可用且距上次诊断 ≥5s 时提示一次,
-      // 并给出最常见的环境根因 (多个仿真实例并发发布同名 TF / 发布者缺席)。
+      // Persistent missing-edge diagnostics (emitted only by the loop's
+      // low-frequency path; sensor callbacks use timeout=0, a quick liveness
+      // probe that never blocks here). When an edge has been unavailable for
+      // >=2s continuously and >=5s have passed since the last diagnostic, log
+      // once with the most common environmental root causes (multiple
+      // simulation instances concurrently publishing the same TF names /
+      // missing publisher).
       const auto key = std::make_pair(target, source);
       bool need_diag = false;
       {
@@ -413,10 +487,12 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
 }
 
 void AyanamiROS::checkTfHealth() {
-  // 低频健康诊断: 每条 sync 边在 ROS TF 侧是否可解析; 持续缺失时每 5s
-  // 输出一次 (附完整帧树), 恢复后输出一次 info。用于把"ROS 侧 TF 树缺帧"
-  // 与"核心侧查询失败"区分开 —— 缺边时直接打印帧树, 一眼定位是哪个生产者
-  // 缺席或残留多实例争抢。
+  // Low-frequency health diagnostics: whether each sync edge is resolvable on
+  // the ROS TF side; while persistently missing, log every 5s (with the full
+  // frame tree), and log one info after recovery. Used to tell "frames missing
+  // from the ROS-side TF tree" apart from "core-side lookup failures" -- on a
+  // missing edge the frame tree is printed directly, showing at a glance which
+  // producer is absent or fighting leftover instances.
   const auto now = std::chrono::steady_clock::now();
   std::string missing_edges;
   for (const auto& edge : tf_listener.tfSyncEdges()) {
@@ -463,7 +539,7 @@ void AyanamiROS::loop() {
     if (navigation_plugin) {
       navigation_plugin->spinOnce();
     }
-    drainPendingGoal();  // latest-wins goal 邮箱: 每次最多下发当前最新一条
+    drainPendingGoal();  // latest-wins goal mailbox: dispatches at most the current latest one per round
     ros::spinOnce();
     rate.sleep();
   }

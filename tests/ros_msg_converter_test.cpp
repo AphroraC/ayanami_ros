@@ -1,12 +1,13 @@
-// ros_msg_converter TDD 测试 (Eigen ↔ ROS msgs)。
+// ros_msg_converter TDD tests (Eigen <-> ROS msgs).
 //
-// 用例覆盖 6+ 类 converter:
-// 1. PoseStamped round-trip (ROS→core→ROS 反查 frame_id / translation 一致)
+// Cases cover 6+ converter kinds:
+// 1. PoseStamped round-trip (ROS->core->ROS, frame_id / translation consistent)
 // 2. TwistStamped round-trip
-// 3. Path → ROS (多 pose, 逐 pose 经 fromRosPose 反查一致)
-// 4. OccupancyGrid → ROS 基本字段 (width/height/resolution/origin/data)
-// 5. LaserScan ← ROS 基本字段
-// 6. PointCloud2 简单转 + round-trip (height=1, width=10, point_step=12 xyz)
+// 3. Path -> ROS (multiple poses, each pose verified via fromRosPose)
+// 4. OccupancyGrid -> ROS basic fields (width/height/resolution/origin/data)
+// 5. LaserScan <- ROS basic fields
+// 6. PointCloud2 simple conversion + round-trip (height=1, width=10,
+// point_step=12 xyz)
 
 #include <cmath>
 #include <cstdint>
@@ -126,7 +127,8 @@ TEST(RosMsgConverter, pathToRosMultiPose) {
   EXPECT_EQ(ros.header.frame_id, "map");
   ASSERT_EQ(ros.poses.size(), core_in.poses.size());
   for (size_t i = 0; i < ros.poses.size(); ++i) {
-    // Path 无 fromRosPath 反向接口, 逐 pose 经 fromRosPose 反查一致。
+    // Path has no fromRosPath reverse API; each pose is verified via
+    // fromRosPose.
     const auto back = ayanami_ros::fromRosPose(ros.poses[i]);
     EXPECT_TRUE(back.pose.toIsometry().matrix().isApprox(
         core_in.poses[i].pose.toIsometry().matrix(), kTol))
@@ -261,8 +263,8 @@ TEST(RosMsgConverter, pointCloud2RoundTrip) {
 }
 
 TEST(RosMsgConverter, headerStampRoundTripThroughAllConverterKinds) {
-  // Pose / Twist / LaserScan / PointCloud2 的 header.stamp 双向完整转换:
-  // ros::Time ↔ ayanami::Timestamp (纳秒)。
+  // header.stamp of Pose / Twist / LaserScan / PointCloud2 is fully converted
+  // both ways: ros::Time <-> ayanami::Timestamp (nanoseconds).
   geometry_msgs::PoseStamped pose_in;
   pose_in.header.frame_id = "map";
   pose_in.header.stamp = ros::Time(123456.789);
@@ -284,7 +286,8 @@ TEST(RosMsgConverter, headerStampRoundTripThroughAllConverterKinds) {
 }
 
 TEST(RosMsgConverter, headerLatestSentinelMapsToRosTimeZero) {
-  // ayanami 显式 latest 哨兵 (0ns) ↔ ros::Time(0) (TF latest 惯例)。
+  // ayanami's explicit latest sentinel (0ns) <-> ros::Time(0) (the TF latest
+  // convention).
   ayanami::geometry_msgs::PoseStamped core_in =
       ayanami::geometry_msgs::PoseStamped::fromIsometry(
           "map", makePose(0.0, 0.0, 0.0, 0.0).toIsometry());

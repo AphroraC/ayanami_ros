@@ -17,6 +17,7 @@
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <tf2_msgs/TFMessage.h>
 
 #include <Eigen/Geometry>
 
@@ -32,17 +33,18 @@
 namespace ayanami_ros {
 
 /**
- * @brief ayanami ROS1 边界宿主节点 (-§4.2)。
+ * @brief ayanami ROS1 boundary host node (-§4.2).
  *
- * 职责: 加载核心 AbstractNavigation 宿主插件 (dlopen
+ * Responsibilities: load the core AbstractNavigation host plugin (dlopen
  * libayanami_costmap_navigation.so)
- * + 加载 ayanami::ExtensionModule 扩展 (rviz_viewer 等), 把 ROS topics → 核心
- * callback 转换, tf sync 与 spinOnce 周期驱动。
+ * + load ayanami::ExtensionModule extensions (rviz_viewer etc.), convert ROS
+ * topics -> core callbacks, and drive tf sync plus the periodic spinOnce.
  *
- * 关键顺序 (verbatim): loadExtensionModules → loadNavigationPlugin →
- * subscribeTopics → loop_thread 启。扩展必须先于 navigation_plugin->start()
- * 注册 NavigationCallbacks 订阅, 否则启动期第一波可视化 emit 会被错过 (
- * ruling)。
+ * Key ordering (verbatim): loadExtensionModules -> loadNavigationPlugin ->
+ * subscribeTopics -> loop_thread start. Extensions must register their
+ * NavigationCallbacks subscriptions before navigation_plugin->start(),
+ * otherwise the first wave of startup visualization emits is missed
+ * (ruling).
  */
 class AyanamiROS {
 public:
@@ -52,35 +54,39 @@ public:
   void start();
   void stop();
 
-  // ---- 测试/宿主支撑 getter (brief: getter for tests) ----
+  // ---- test/host support getters (brief: getter for tests) ----
   const std::vector<ayanami::ExtensionModule::Ptr>& extensionModules() const { return extension_modules; }
   ayanami::abstract::AbstractNavigation::Ptr navigationPlugin() const { return navigation_plugin; }
   const std::string& configPath() const { return config_path; }
 
-  // ---- 输入接线 (核心边界, 供 ROS 回调 / loop / 测试) ----
-  /// @brief TF 边写入: ROS 侧查到的 TransformStamped 直写核心
-  /// RobotStateController (核心唯一的 tf 查询供应商)。
+  // ---- input wiring (core boundary, used by ROS callbacks / loop / tests) ----
+  /// @brief TF edge write: the TransformStamped looked up on the ROS side is
+  /// written directly into the core RobotStateController (the core's only tf
+  /// query provider).
   void setTransform(const std::string& parent, const std::string& child,
                     ayanami::Timestamp stamp,
                     const Eigen::Isometry3d& transform, bool is_static);
-  /// @brief odom 速度直写核心 RobotStateController (位姿读取仍由核心执行层
-  /// 经 TF 查询)。
+  /// @brief Writes the odom velocity directly into the core
+  /// RobotStateController (pose reads are still done by the core execution
+  /// layer via TF queries).
   void setOdometry(const ayanami::geometry_msgs::TwistStamped& twist);
-  /// @brief 障碍观测输入: 点云 (先同步当前可用的 TF 边, 再直递导航宿主)。
+  /// @brief Obstacle observation input: point cloud (syncs currently available
+  /// TF edges first, then delivers directly to the navigation host).
   void submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud);
-  /// @brief 障碍观测输入: 激光扫描 (同上)。
+  /// @brief Obstacle observation input: laser scan (same as above).
   void submitSensor(const ayanami::sensor_msgs::LaserScan& scan);
-  /// @brief latest-wins goal 邮箱投递 (ROS goalCallback 转换后调用; 覆写待发
-  /// goal, 不排队)。
+  /// @brief latest-wins goal mailbox delivery (called after conversion in the
+  /// ROS goalCallback; overwrites the pending goal, no queueing).
   void submitGoal(const ayanami::geometry_msgs::PoseStamped& goal);
-  /// @brief loop 线程侧: 取当前最新 goal (若有) 调 navigation_plugin->setGoal。
-  /// @return true 表示确实下发了一个 goal。
+  /// @brief loop-thread side: takes the current latest goal (if any) and calls
+  /// navigation_plugin->setGoal.
+  /// @return true if a goal was actually dispatched.
   bool drainPendingGoal();
-  /// @brief 测试/观察: 邮箱内是否还有待发 goal。
+  /// @brief Test/observation: whether a pending goal remains in the mailbox.
   bool hasPendingGoal() const;
 
 private:
-  void loadExtensionModules(const ayanami::Config& config_ros);
+  void loadExtensionModules();
   void loadNavigationPlugin(const ayanami::Config& config_ros);
   void subscribeTopics();
   void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
@@ -89,8 +95,14 @@ private:
   void odomCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void syncTransformsToCore();
   void syncTransformsToCore(const ros::Time& stamp, double timeout);
-  /// @brief ROS TF 树健康诊断 (loop 低频调用): 检查 tf_sync_edges 各边在 ROS
-  /// 侧是否可解析; 缺失时输出一次带完整帧树的警告 (定位环境/残留实例问题)。
+  /// @brief /tf message callback (event-driven sync): each message immediately
+  /// triggers one full-edge sync, cutting the ROS TF -> core latency from half
+  /// a polling period down to message-processing time.
+  void tfCallback(const tf2_msgs::TFMessage::ConstPtr& msg);
+  /// @brief ROS TF tree health diagnostics (called at low frequency by the
+  /// loop): checks whether each tf_sync_edges edge is resolvable on the ROS
+  /// side; on failure, logs a warning once with the full frame tree (to pin
+  /// down environment / leftover-instance problems).
   void checkTfHealth();
   void loop();
 
@@ -99,8 +111,9 @@ private:
   std::string config_path;
 
   ayanami::abstract::AbstractNavigation::Ptr navigation_plugin;
-  // 扩展模块统一继承 ayanami::ExtensionModule (无 ROS 特有子类): 输入归
-  // AyanamiROS, 输出发布由 rviz_viewer 之类的扩展自身在构造期完成。
+  // Extension modules all derive from ayanami::ExtensionModule (no
+  // ROS-specific subclasses): input belongs to AyanamiROS; output publishing is
+  // done by the extension itself (e.g. rviz_viewer) at construction time.
   std::vector<ayanami::ExtensionModule::Ptr> extension_modules;
 
   ayanami_ros::TF2Listener tf_listener;
@@ -109,38 +122,56 @@ private:
 
   std::atomic<bool> kill_switch{false};
   std::thread loop_thread;
-  // latest-wins goal 邮箱 : ROS 回调只转换 + 覆写 pending_goal,
-  // loop 线程每次取当前最新一条下发 setGoal (不排队, 不丢未处理)。
+  // Event-driven TF sync: dedicated /tf callback queue + thread (bypasses the
+  // 50Hz loop's ros::spinOnce, otherwise the callback rate is clamped by the
+  // polling ceiling); sync_mutex_ serializes concurrent syncs from the three
+  // entry points: tf thread / loop thread / sensor callbacks.
+  ros::CallbackQueue tf_queue_;
+  ros::NodeHandle tf_nh_;
+  ros::Subscriber tf_sub_;
+  std::thread tf_queue_thread_;
+  std::mutex sync_mutex_;
+  // latest-wins goal mailbox: the ROS callback only converts + overwrites
+  // pending_goal; each round the loop thread takes the current latest one and
+  // dispatches setGoal (no queueing, no unhandled goal is lost).
   mutable std::mutex goal_mutex;
   std::optional<ayanami::geometry_msgs::PoseStamped> pending_goal;
   std::mutex tf_edge_mutex;
   std::map<std::pair<std::string, std::string>, bool> tf_edge_static;
-  // TF 缺边诊断 (50Hz loop 维护): 边首次失败时间 + 上次诊断输出时间。
-  // 传感器回调路径不阻塞 (timeout=0), 诊断只由 loop 的低频路径输出。
+  // TF missing-edge diagnostics (maintained by the 50Hz loop): first failure
+  // time per edge + last diagnostic log time. The sensor callback path does not
+  // block (timeout=0); diagnostics are only emitted by the loop's low-frequency
+  // path.
   std::map<std::pair<std::string, std::string>,
            std::chrono::steady_clock::time_point>
       tf_missing_since;
   std::map<std::pair<std::string, std::string>,
            std::chrono::steady_clock::time_point>
       tf_diag_logged_at;
-  // TF 健康诊断状态 (checkTfHealth 使用)。
+  // TF health diagnostic state (used by checkTfHealth).
   bool tf_health_was_bad{false};
   std::chrono::steady_clock::time_point tf_health_last_log{};
   std::set<std::pair<std::string, std::string>> configured_static_edges;
   double tf_sync_rate = 50.0;
 
-  // config_ros.json::ayanami_ros 边界参数 。
+  // config_ros.json::ayanami_ros boundary parameters.
   std::string laserscan_topic, pointcloud_topic, odom_topic, goal_topic;
   std::string map_frame, odom_frame, robot_frame;
-  // 全局动态代价图重建触发 (odom<-base_footprint 边): 累计"自上次清空以来"
-  // 的机器人旋转/平移。旋转是标记错位的主源 —— 轮式里程计在原地旋转时打滑
-  // 欠报转角 (~6%/rad 实测), 而 AMCL 修正以有限速率追赶, 期间 scan 按滞后
-  // 变换落图, 全局图动态标记逐渐错位; 累计旋转/平移超阈值即清空重建。
-  // 注意: 不能用 map<-odom 修正增量做信号 —— AMCL 修正渐进且可能长期不收敛
-  // (恢复注入关闭时永不收敛), 修正增量恒为小值, 检测不到错位积累。
+  // Global dynamic costmap rebuild trigger (odom<-base_footprint edge):
+  // accumulates robot rotation/translation "since the last clear". Rotation is
+  // the main source of marker misalignment -- wheeled odometry slips while
+  // rotating in place and under-reports the turned angle (~6%/rad measured),
+  // while AMCL corrections catch up at a finite rate; in the meantime scans are
+  // rasterized with the lagging transform and the global map's dynamic markers
+  // drift out of place; once accumulated rotation/translation exceeds the
+  // threshold, clear and rebuild.
+  // Note: the map<-odom correction increment must not be used as the signal --
+  // AMCL corrections are gradual and may not converge for a long time (never
+  // converges with recovery injection disabled); the correction increment stays
+  // small, so the misalignment accumulation goes undetected.
   bool localization_jump_prev_valid{false};
-  double localization_clear_yaw_threshold{1.0};  // rad, 累计自上次清空
-  double localization_clear_pos_threshold{2.0};  // m, 累计自上次清空
+  double localization_clear_yaw_threshold{1.0};  // rad, accumulated since last clear
+  double localization_clear_pos_threshold{2.0};  // m, accumulated since last clear
   double localization_accum_yaw{0.0};
   double localization_accum_pos{0.0};
   Eigen::Isometry3d localization_jump_prev{Eigen::Isometry3d::Identity()};

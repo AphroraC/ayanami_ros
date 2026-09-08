@@ -4,9 +4,10 @@ project(ayanami_ros VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 与 ayanami 保持同一 shared_ptr 原子实现策略 (-mcx16), 避免本包编译的
-# CallbackSlot/CostmapWrapper 头文件 TU (ayanami_ros lib、rviz_viewer、
-# 测试) 与 libayanami 内部使用不同实现路径混用同一 shared_ptr 对象。
+# Use the same shared_ptr atomic implementation strategy as ayanami (-mcx16),
+# so TUs in this package that include the CallbackSlot/CostmapWrapper headers
+# (ayanami_ros lib, rviz_viewer, tests) never mix shared_ptr objects built with
+# a different implementation path than libayanami internals.
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag("-mcx16" AYANAMI_ROS_HAS_MCX16)
 if(AYANAMI_ROS_HAS_MCX16)
@@ -29,10 +30,11 @@ find_package(spdlog REQUIRED)
 
 include_directories(include ${catkin_INCLUDE_DIRS})
 
-# 用 ayanami vendored nlohmann (3.11.3): 系统 3.7.3 与本 toolchain (GCC10)
-# 不兼容 (thirdparty.cmake 注)。ayanami 未将 vendored 头导出给下游, 此处指向
-# 同一 workspace 内 ayanami 源码树 thirdparty。fast_tf 同 (header-only,
-# TransformStore 头 include <fast_tf.hpp>)。
+# Use ayanami's vendored nlohmann (3.11.3): the system 3.7.3 is incompatible
+# with this toolchain (GCC10) (see thirdparty.cmake note). ayanami does not
+# export the vendored headers downstream, so point here at the thirdparty
+# directory of the ayanami source tree in the same workspace. Same for fast_tf
+# (header-only; the TransformStore header includes <fast_tf.hpp>).
 include_directories(${PROJECT_SOURCE_DIR}/../ayanami/thirdparty)
 include_directories(${PROJECT_SOURCE_DIR}/../ayanami/thirdparty/fast_tf)
 
@@ -57,20 +59,31 @@ target_link_libraries(ayanami_ros PUBLIC
 add_executable(ayanami_rosnode apps/ayanami_rosnode.cpp)
 target_link_libraries(ayanami_rosnode ayanami_ros)
 
-# cmd_vel_bridge: ayanami 的 /cmd_vel (Twist) -> rm 底盘 /cmd_chassis
-# (ChassisCmd, 注入 mode/accel/power_limit; ChassisBase 的 RampFilter 在
-# accel=0 时速度命令永远爬不上去)。纯 ROS 节点, 不依赖 libayanami。
-add_executable(cmd_vel_bridge apps/cmd_vel_bridge.cpp)
-target_link_libraries(cmd_vel_bridge ${catkin_LIBRARIES})
-
-# Task 9: rviz_viewer ROS extension .so (spec §4.5 核心->ROS)。导出
-# create_extension_module 工厂符号供 AyanamiROS dlopen; config_ros.json::extension_modules
-# 以 "libayanami_rviz_viewer.so" 裸名引用。
+# Task 9: rviz_viewer ROS extension .so (spec §4.5 core->ROS). Exports the
+# create_extension_module factory symbol for AyanamiROS to dlopen;
+# config_ros.json::extension_modules references it by the bare name
+# "libayanami_rviz_viewer.so".
 add_library(rviz_viewer SHARED modules/rviz_viewer.cpp)
 target_link_libraries(rviz_viewer PRIVATE ayanami_ros ayanami::ayanami)
 set_target_properties(rviz_viewer PROPERTIES PREFIX "libayanami_")
 
-install(TARGETS ayanami_ros ayanami_rosnode rviz_viewer cmd_vel_bridge
+# cmd_chassis_publisher: sole chassis command output extension (rm_msgs
+# allowed here; rviz_viewer stays rm_msgs-free). Loaded via
+# config_extensions.json::extensions.loading_extension_modules.
+add_library(cmd_chassis_publisher SHARED modules/cmd_chassis_publisher.cpp)
+target_link_libraries(cmd_chassis_publisher PRIVATE ayanami_ros ayanami::ayanami ${catkin_LIBRARIES})
+set_target_properties(cmd_chassis_publisher PROPERTIES PREFIX "libayanami_")
+
+# tf_sync_probe: TF sync stress-test probe extension (polls TransformStore/
+# fast_tf in-process, recording encoded-value change events; dynamically loaded
+# via extension_modules by scripts/tf_sync_stress_test.sh, not part of the
+# production extension_modules default list).
+add_library(tf_sync_probe SHARED modules/tf_sync_probe.cpp)
+target_link_libraries(tf_sync_probe PRIVATE ayanami_ros ayanami::ayanami)
+set_target_properties(tf_sync_probe PROPERTIES PREFIX "libayanami_")
+
+install(TARGETS ayanami_ros ayanami_rosnode rviz_viewer cmd_chassis_publisher
+  tf_sync_probe
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY include/ DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
@@ -86,20 +99,21 @@ if(CATKIN_ENABLE_TESTING)
       RVIZ_VIEWER_SO="$<TARGET_FILE:rviz_viewer>")
   endif()
 
-  # Task 7: TF2Listener (tf2_ros Buffer + TransformListener + lookup_transform)。
+  # Task 7: TF2Listener (tf2_ros Buffer + TransformListener + lookup_transform).
   catkin_add_gtest(tf2_listener_test tests/tf2_listener_test.cpp)
   if(TARGET tf2_listener_test)
     target_link_libraries(tf2_listener_test ayanami_ros)
   endif()
 
-  # Task 8: ros_msg_converter (Eigen ↔ ROS msgs) 纯头文件 inline 实现。
+  # Task 8: ros_msg_converter (Eigen <-> ROS msgs), header-only inline
+  # implementation.
   catkin_add_gtest(ros_msg_converter_test tests/ros_msg_converter_test.cpp)
   if(TARGET ros_msg_converter_test)
     target_link_libraries(ros_msg_converter_test ayanami_ros)
   endif()
 
-  # Task 9: rviz_viewer ROS extension .so (dlopen; 构造期自建 NodeHandle 并
-  # advertise + 注册 NavigationCallbacks)。
+  # Task 9: rviz_viewer ROS extension .so (dlopen; creates its own NodeHandle
+  # at construction time and advertises + registers NavigationCallbacks).
   catkin_add_gtest(rviz_viewer_test tests/rviz_viewer_test.cpp)
   if(TARGET rviz_viewer_test)
     target_link_libraries(rviz_viewer_test ayanami_ros ${CMAKE_DL_LIBS})
@@ -107,9 +121,19 @@ if(CATKIN_ENABLE_TESTING)
       RVIZ_VIEWER_SO="$<TARGET_FILE:rviz_viewer>")
   endif()
 
-  # Task 10: config_ros.json + costmap.json + costmap_navigation.json
-  # (Gazebo nav_demo 对齐) 内容一致性验证 (spec §8.1-§8.3)。
-  # 用源树真实 config/assets 目录 + nav_demo 地图目录做兼容性检查。
+  catkin_add_gtest(cmd_chassis_publisher_test
+                   tests/cmd_chassis_publisher_test.cpp)
+  if(TARGET cmd_chassis_publisher_test)
+    target_link_libraries(cmd_chassis_publisher_test ayanami_ros
+                          ${CMAKE_DL_LIBS})
+    target_compile_definitions(cmd_chassis_publisher_test PRIVATE
+      CMD_CHASSIS_PUBLISHER_SO="$<TARGET_FILE:cmd_chassis_publisher>")
+  endif()
+
+  # Task 10: content consistency verification of config_ros.json + costmap.json
+  # + costmap_navigation.json (aligned with Gazebo nav_demo)
+  # (spec §8.1-§8.3). Uses the real in-tree config/assets directories plus the
+  # nav_demo map directory for compatibility checks.
   catkin_add_gtest(config_spec_verify_test tests/config_spec_verify_test.cpp)
   if(TARGET config_spec_verify_test)
     target_link_libraries(config_spec_verify_test ayanami_ros)
