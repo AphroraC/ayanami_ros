@@ -30,7 +30,7 @@ namespace {
 #error "CMD_CHASSIS_PUBLISHER_SO must be defined by CMake"
 #endif
 
-const char* const g_plugin_so = CMD_CHASSIS_PUBLISHER_SO;
+const char* const g_module_so = CMD_CHASSIS_PUBLISHER_SO;
 
 void writeFile(const std::filesystem::path& path, const std::string& content) {
   std::filesystem::create_directories(path.parent_path());
@@ -71,7 +71,7 @@ int pubCount(const char* symbol) {
 TEST(CmdChassisPublisher, dlopenCreateAndSubscribeVelocity) {
   initGlobalConfig(makeConfigDir());
 
-  auto ext = ayanami::ExtensionModule::load_module(g_plugin_so);
+  auto ext = ayanami::ExtensionModule::loadModule(g_module_so);
   ASSERT_NE(ext, nullptr);
 
   // Constructor advertise/subscribe done: count hook reachable (dlsym, >= 0).

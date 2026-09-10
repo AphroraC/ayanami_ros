@@ -151,8 +151,10 @@ inline ayanami::sensor_msgs::PointCloud2 fromRosPointCloud2(
 inline sensor_msgs::PointCloud2 toRosPointCloud2(
     const ayanami::sensor_msgs::PointCloud2& in) {
   sensor_msgs::PointCloud2 out;
-  out.header = detail::toRosHeader(in.header);
   pcl::toROSMsg(in.cloud, out);
+  // pcl::toROSMsg overwrites out.header from the PCL cloud header (usually
+  // empty): the CORE header is authoritative, so re-apply it last.
+  out.header = detail::toRosHeader(in.header);
   return out;
 }
 

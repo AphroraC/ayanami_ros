@@ -6,8 +6,8 @@
 // 3. Path -> ROS (multiple poses, each pose verified via fromRosPose)
 // 4. OccupancyGrid -> ROS basic fields (width/height/resolution/origin/data)
 // 5. LaserScan <- ROS basic fields
-// 6. PointCloud2 simple conversion + round-trip (height=1, width=10,
-// point_step=12 xyz)
+// 6. PointCloud2 conversion + round-trip (core representation = PCL XYZI
+// cloud since the PCL refactor)
 
 #include <cmath>
 #include <cstdint>
@@ -21,6 +21,9 @@
 #include <nav_msgs/Path.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/LaserScan.h>
+
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 
 #include <Eigen/Dense>
 
@@ -189,77 +192,64 @@ TEST(RosMsgConverter, laserScanFromRosBasicFields) {
   EXPECT_FLOAT_EQ(core.intensities[0], 10.0f);
 }
 
-TEST(RosMsgConverter, pointCloud2FromRosFields) {
+TEST(RosMsgConverter, pointCloud2FromRosProducesPclXyziCloud) {
+  // Producer side: a ROS cloud built from a PCL XYZI cloud (the realistic
+  // lidar driver path).
+  pcl::PointCloud<pcl::PointXYZI> producer;
+  producer.header.frame_id = "lidar";
+  producer.resize(2);
+  producer.points[0].x = 1.0f;
+  producer.points[0].y = 2.0f;
+  producer.points[0].z = 3.0f;
+  producer.points[0].intensity = 50.0f;
+  producer.points[1].x = -1.5f;
+  producer.points[1].y = 0.5f;
+  producer.points[1].z = 2.25f;
+  producer.points[1].intensity = 0.0f;
   sensor_msgs::PointCloud2 ros_in;
-  ros_in.header.frame_id = "lidar";
+  pcl::toROSMsg(producer, ros_in);
   ros_in.header.stamp = ros::Time(4.25);
-  ros_in.height = 1;
-  ros_in.width = 10;
-  sensor_msgs::PointField fx, fy, fz;
-  fx.name = "x";
-  fx.offset = 0;
-  fx.datatype = sensor_msgs::PointField::FLOAT32;
-  fx.count = 1;
-  fy.name = "y";
-  fy.offset = 4;
-  fy.datatype = sensor_msgs::PointField::FLOAT32;
-  fy.count = 1;
-  fz.name = "z";
-  fz.offset = 8;
-  fz.datatype = sensor_msgs::PointField::FLOAT32;
-  fz.count = 1;
-  ros_in.fields = {fx, fy, fz};
-  ros_in.is_bigendian = false;
-  ros_in.point_step = 12;
-  ros_in.row_step = 120;
-  ros_in.data.assign(ros_in.row_step, 0);
-  ros_in.is_dense = true;
 
   const auto core = ayanami_ros::fromRosPointCloud2(ros_in);
   EXPECT_EQ(core.header.frame_id, "lidar");
   EXPECT_EQ(core.header.stamp.count(), 4250000000LL);
-  EXPECT_EQ(core.height, 1u);
-  EXPECT_EQ(core.width, 10u);
-  ASSERT_EQ(core.fields.size(), 3u);
-  EXPECT_EQ(core.fields[0].name, "x");
-  EXPECT_EQ(core.fields[0].offset, 0u);
-  EXPECT_EQ(core.fields[0].datatype, ayanami::sensor_msgs::PointField::FLOAT32);
-  EXPECT_EQ(core.fields[0].count, 1u);
-  EXPECT_EQ(core.fields[2].name, "z");
-  EXPECT_EQ(core.fields[2].offset, 8u);
-  EXPECT_EQ(core.point_step, 12u);
-  EXPECT_EQ(core.row_step, 120u);
-  EXPECT_EQ(core.data.size(), ros_in.data.size());
-  EXPECT_EQ(core.is_dense, true);
+  ASSERT_EQ(core.cloud.points.size(), 2u);
+  EXPECT_FLOAT_EQ(core.cloud.points[0].x, 1.0f);
+  EXPECT_FLOAT_EQ(core.cloud.points[0].y, 2.0f);
+  EXPECT_FLOAT_EQ(core.cloud.points[0].z, 3.0f);
+  EXPECT_FLOAT_EQ(core.cloud.points[0].intensity, 50.0f);
+  EXPECT_FLOAT_EQ(core.cloud.points[1].x, -1.5f);
+  EXPECT_FLOAT_EQ(core.cloud.points[1].y, 0.5f);
+  EXPECT_FLOAT_EQ(core.cloud.points[1].z, 2.25f);
 }
 
 TEST(RosMsgConverter, pointCloud2RoundTrip) {
-  sensor_msgs::PointCloud2 ros_in;
-  ros_in.header.frame_id = "lidar";
-  ros_in.height = 1;
-  ros_in.width = 4;
-  sensor_msgs::PointField fx;
-  fx.name = "x";
-  fx.offset = 0;
-  fx.datatype = sensor_msgs::PointField::FLOAT32;
-  fx.count = 1;
-  ros_in.fields = {fx};
-  ros_in.point_step = 4;
-  ros_in.row_step = 16;
-  ros_in.data = {0, 0, 0x80, 0x3f, 0, 0, 0, 0, 0, 0, 0x20, 0x40, 0, 0, 0, 0};
+  ayanami::sensor_msgs::PointCloud2 core_in;
+  core_in.header.frame_id = "lidar";
+  core_in.cloud.resize(2);
+  core_in.cloud.points[0].x = 1.0f;
+  core_in.cloud.points[0].y = 0.0f;
+  core_in.cloud.points[0].z = 0.5f;
+  core_in.cloud.points[1].x = 0.0f;
+  core_in.cloud.points[1].y = 0.25f;
+  core_in.cloud.points[1].z = 1.0f;
+  core_in.cloud.points[1].intensity = 7.0f;
 
-  const auto core = ayanami_ros::fromRosPointCloud2(ros_in);
-  const auto ros_out = ayanami_ros::toRosPointCloud2(core);
+  const auto ros_out = ayanami_ros::toRosPointCloud2(core_in);
   EXPECT_EQ(ros_out.header.frame_id, "lidar");
+  EXPECT_EQ(ros_out.width, 2u);
   EXPECT_EQ(ros_out.height, 1u);
-  EXPECT_EQ(ros_out.width, 4u);
-  ASSERT_EQ(ros_out.fields.size(), 1u);
-  EXPECT_EQ(ros_out.fields[0].name, "x");
-  EXPECT_EQ(ros_out.fields[0].offset, 0u);
-  EXPECT_EQ(ros_out.point_step, 4u);
-  EXPECT_EQ(ros_out.row_step, 16u);
-  EXPECT_EQ(ros_out.data, ros_in.data);
-  EXPECT_EQ(ros_out.is_dense, false);
+
+  const auto core_back = ayanami_ros::fromRosPointCloud2(ros_out);
+  EXPECT_EQ(core_back.header.frame_id, "lidar");
+  ASSERT_EQ(core_back.cloud.points.size(), 2u);
+  EXPECT_FLOAT_EQ(core_back.cloud.points[0].x, 1.0f);
+  EXPECT_FLOAT_EQ(core_back.cloud.points[0].y, 0.0f);
+  EXPECT_FLOAT_EQ(core_back.cloud.points[0].z, 0.5f);
+  EXPECT_FLOAT_EQ(core_back.cloud.points[1].x, 0.0f);
+  EXPECT_FLOAT_EQ(core_back.cloud.points[1].y, 0.25f);
+  EXPECT_FLOAT_EQ(core_back.cloud.points[1].z, 1.0f);
+  EXPECT_FLOAT_EQ(core_back.cloud.points[1].intensity, 7.0f);
 }
 
 TEST(RosMsgConverter, headerStampRoundTripThroughAllConverterKinds) {

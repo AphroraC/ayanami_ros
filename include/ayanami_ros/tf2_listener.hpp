@@ -16,6 +16,20 @@
 
 namespace ayanami_ros {
 
+/// @brief One configured sync edge with its own sync rate.
+///
+/// Config entry format (config_ros.json::tf_sync_edges / tf_static_edges):
+///   "<target>-<source>[:<rate>hz]"    e.g. "map-odom:50hz", "base_link-laser"
+/// The rate suffix is optional; a missing suffix falls back to the global
+/// tf_sync_rate. For tf_static_edges the suffix is accepted but ignored
+/// (static transforms are re-asserted, their value never changes).
+/// Constraint: the source (child) frame name must not contain '-'.
+struct TfSyncEdge {
+  std::string target;
+  std::string source;
+  double rate_hz{10.0};
+};
+
 /**
  * @brief TF2 wrapper: tf2_ros::Buffer + TransformListener (verbatim).
  *
@@ -33,8 +47,7 @@ namespace ayanami_ros {
  */
 class TF2Listener {
 public:
-  TF2Listener(ros::NodeHandle& nh,
-              const std::vector<std::pair<std::string, std::string>>& edges);
+  TF2Listener(ros::NodeHandle& nh, const std::vector<TfSyncEdge>& edges);
 
   /// @brief Looks up the source->target transform; stamp=ros::Time(0) means
   /// latest.
@@ -52,10 +65,8 @@ public:
                         const ros::Time& stamp, Eigen::Isometry3d& out,
                         double timeout = 0.0);
 
-  /// @brief List of configured tf sync edges (target, source).
-  const std::vector<std::pair<std::string, std::string>>& tfSyncEdges() const {
-    return tf_sync_edges;
-  }
+  /// @brief List of configured tf sync edges (with per-edge sync rate).
+  const std::vector<TfSyncEdge>& tfSyncEdges() const { return tf_sync_edges; }
 
   /// @brief Synchronously injects one /tf transform into the internal tf2
   /// buffer.
@@ -83,7 +94,7 @@ public:
 private:
   tf2_ros::Buffer buffer;
   std::unique_ptr<tf2_ros::TransformListener> listener;
-  std::vector<std::pair<std::string, std::string>> tf_sync_edges;
+  std::vector<TfSyncEdge> tf_sync_edges;
 };
 
 }  // namespace ayanami_ros

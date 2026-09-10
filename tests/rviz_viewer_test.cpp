@@ -35,11 +35,23 @@
 
 namespace {
 
+
 #ifndef RVIZ_VIEWER_SO
 #error "RVIZ_VIEWER_SO must be defined by CMake"
 #endif
 
 const char* const g_rviz_viewer_so = RVIZ_VIEWER_SO;
+
+/// @brief Load the module the way the production loader does (context injected
+/// after a successful load): parameters arrive through configureParameters, so
+/// the 1-arg load would leave the module on its built-in defaults.
+ayanami::ExtensionModule::Ptr loadRvizViewer() {
+  return ayanami::ExtensionModule::loadModule(
+      g_rviz_viewer_so,
+      ayanami::ModuleContext{
+          "rviz_viewer",
+          ayanami::Config(ayanami::GlobalConfig::getConfigPath("config_extensions"))});
+}
 
 void writeFile(const std::filesystem::path& path, const std::string& content) {
   std::filesystem::create_directories(path.parent_path());
@@ -78,7 +90,7 @@ void initGlobalConfig(const std::filesystem::path& dir) {
 }
 
 // Reads publish counts / topic names from librviz_viewer.so (dlopen done by
-// load_module with RTLD_GLOBAL).
+// loadModule with RTLD_GLOBAL).
 int pubCount(const char* symbol) {
   using Getter = int (*)();
   auto getter = reinterpret_cast<Getter>(dlsym(RTLD_DEFAULT, symbol));
@@ -111,7 +123,7 @@ ayanami::nav_msgs::Path makePath() {
 TEST(RvizViewer, dlopenCreateAndRegisterCallbacks) {
   initGlobalConfig(makeConfigDir());
 
-  auto ext = ayanami::ExtensionModule::load_module(g_rviz_viewer_so);
+  auto ext = loadRvizViewer();
   ASSERT_NE(ext, nullptr);
   auto viewer = std::dynamic_pointer_cast<ayanami::ExtensionModule>(ext);
   ASSERT_NE(viewer, nullptr);
@@ -143,7 +155,7 @@ TEST(RvizViewer, dlopenCreateAndRegisterCallbacks) {
 TEST(RvizViewer, emitCallbacksPublishRos) {
   initGlobalConfig(makeConfigDir());
 
-  auto ext = ayanami::ExtensionModule::load_module(g_rviz_viewer_so);
+  auto ext = loadRvizViewer();
   ASSERT_NE(ext, nullptr);
 
   // Actively emit NavigationCallbacks -> the corresponding publish handler is
@@ -259,7 +271,7 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
 TEST(RvizViewer, destructorRemovesCallbacks) {
   initGlobalConfig(makeConfigDir());
 
-  auto ext = ayanami::ExtensionModule::load_module(g_rviz_viewer_so);
+  auto ext = loadRvizViewer();
   ASSERT_NE(ext, nullptr);
 
   ayanami::actions::GoalResult<ayanami::actions::GetPathResult> get_path;

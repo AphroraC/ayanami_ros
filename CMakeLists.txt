@@ -92,7 +92,20 @@ install(DIRECTORY launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 if(CATKIN_ENABLE_TESTING)
   find_package(GTest REQUIRED)
 
+  # catkin_add_gtest always passes EXCLUDE_FROM_ALL to the executable (see
+  # catkin/cmake/test/gtest.cmake), so `catkin build ayanami_ros` never
+  # rebuilds the test binaries and `ctest` can silently run stale executables
+  # against edited sources. Put each test back into `all` so a normal build
+  # keeps them current. The TARGET guard is required: catkin_add_gtest is a
+  # no-op when testing is disabled or GTest is unavailable.
+  function(ayanami_ros_include_test_in_all target)
+    if(TARGET ${target})
+      set_target_properties(${target} PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    endif()
+  endfunction()
+
   catkin_add_gtest(ayanami_ros_load_test tests/ayanami_ros_load_test.cpp)
+  ayanami_ros_include_test_in_all(ayanami_ros_load_test)
   if(TARGET ayanami_ros_load_test)
     target_link_libraries(ayanami_ros_load_test ayanami_ros ${CMAKE_DL_LIBS})
     target_compile_definitions(ayanami_ros_load_test PRIVATE
@@ -101,6 +114,7 @@ if(CATKIN_ENABLE_TESTING)
 
   # Task 7: TF2Listener (tf2_ros Buffer + TransformListener + lookup_transform).
   catkin_add_gtest(tf2_listener_test tests/tf2_listener_test.cpp)
+  ayanami_ros_include_test_in_all(tf2_listener_test)
   if(TARGET tf2_listener_test)
     target_link_libraries(tf2_listener_test ayanami_ros)
   endif()
@@ -108,6 +122,7 @@ if(CATKIN_ENABLE_TESTING)
   # Task 8: ros_msg_converter (Eigen <-> ROS msgs), header-only inline
   # implementation.
   catkin_add_gtest(ros_msg_converter_test tests/ros_msg_converter_test.cpp)
+  ayanami_ros_include_test_in_all(ros_msg_converter_test)
   if(TARGET ros_msg_converter_test)
     target_link_libraries(ros_msg_converter_test ayanami_ros)
   endif()
@@ -115,6 +130,7 @@ if(CATKIN_ENABLE_TESTING)
   # Task 9: rviz_viewer ROS extension .so (dlopen; creates its own NodeHandle
   # at construction time and advertises + registers NavigationCallbacks).
   catkin_add_gtest(rviz_viewer_test tests/rviz_viewer_test.cpp)
+  ayanami_ros_include_test_in_all(rviz_viewer_test)
   if(TARGET rviz_viewer_test)
     target_link_libraries(rviz_viewer_test ayanami_ros ${CMAKE_DL_LIBS})
     target_compile_definitions(rviz_viewer_test PRIVATE
@@ -123,6 +139,7 @@ if(CATKIN_ENABLE_TESTING)
 
   catkin_add_gtest(cmd_chassis_publisher_test
                    tests/cmd_chassis_publisher_test.cpp)
+  ayanami_ros_include_test_in_all(cmd_chassis_publisher_test)
   if(TARGET cmd_chassis_publisher_test)
     target_link_libraries(cmd_chassis_publisher_test ayanami_ros
                           ${CMAKE_DL_LIBS})
@@ -135,6 +152,7 @@ if(CATKIN_ENABLE_TESTING)
   # (spec §8.1-§8.3). Uses the real in-tree config/assets directories plus the
   # nav_demo map directory for compatibility checks.
   catkin_add_gtest(config_spec_verify_test tests/config_spec_verify_test.cpp)
+  ayanami_ros_include_test_in_all(config_spec_verify_test)
   if(TARGET config_spec_verify_test)
     target_link_libraries(config_spec_verify_test ayanami_ros)
     target_include_directories(config_spec_verify_test PRIVATE

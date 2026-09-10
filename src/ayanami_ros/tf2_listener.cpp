@@ -4,7 +4,7 @@
 
 namespace ayanami_ros {
 
-TF2Listener::TF2Listener(ros::NodeHandle& nh, const std::vector<std::pair<std::string, std::string>>& edges)
+TF2Listener::TF2Listener(ros::NodeHandle& nh, const std::vector<TfSyncEdge>& edges)
 : tf_sync_edges(edges) {
   (void)nh;
   // spin_thread=true (the TransformListener default) feeds the buffer from a

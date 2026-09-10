@@ -35,14 +35,14 @@ namespace ayanami_ros {
 /**
  * @brief ayanami ROS1 boundary host node (-§4.2).
  *
- * Responsibilities: load the core AbstractNavigation host plugin (dlopen
+ * Responsibilities: load the core AbstractNavigation host module (dlopen
  * libayanami_costmap_navigation.so)
  * + load ayanami::ExtensionModule extensions (rviz_viewer etc.), convert ROS
  * topics -> core callbacks, and drive tf sync plus the periodic spinOnce.
  *
- * Key ordering (verbatim): loadExtensionModules -> loadNavigationPlugin ->
+ * Key ordering (verbatim): loadExtensionModules -> loadNavigationModule ->
  * subscribeTopics -> loop_thread start. Extensions must register their
- * NavigationCallbacks subscriptions before navigation_plugin->start(),
+ * NavigationCallbacks subscriptions before navigation_module->start(),
  * otherwise the first wave of startup visualization emits is missed
  * (ruling).
  */
@@ -56,7 +56,7 @@ public:
 
   // ---- test/host support getters (brief: getter for tests) ----
   const std::vector<ayanami::ExtensionModule::Ptr>& extensionModules() const { return extension_modules; }
-  ayanami::abstract::AbstractNavigation::Ptr navigationPlugin() const { return navigation_plugin; }
+  ayanami::abstract::AbstractNavigation::Ptr navigationModule() const { return navigation_module; }
   const std::string& configPath() const { return config_path; }
 
   // ---- input wiring (core boundary, used by ROS callbacks / loop / tests) ----
@@ -79,7 +79,7 @@ public:
   /// ROS goalCallback; overwrites the pending goal, no queueing).
   void submitGoal(const ayanami::geometry_msgs::PoseStamped& goal);
   /// @brief loop-thread side: takes the current latest goal (if any) and calls
-  /// navigation_plugin->setGoal.
+  /// navigation_module->setGoal.
   /// @return true if a goal was actually dispatched.
   bool drainPendingGoal();
   /// @brief Test/observation: whether a pending goal remains in the mailbox.
@@ -87,8 +87,12 @@ public:
 
 private:
   void loadExtensionModules();
-  void loadNavigationPlugin(const ayanami::Config& config_ros);
+  void loadNavigationModule(const ayanami::Config& config_ros);
   void subscribeTopics();
+  /// @brief Refuse to start when config_ros's robot_frame mirror disagrees with
+  /// the core's single source (config_navigation.json::navigation.robot_frame).
+  /// Throws std::runtime_error on mismatch or when either side is unreadable.
+  void verifyRobotFrameMatchesNavigation();
   void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg);
   void pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg);
   void laserscanCallback(const sensor_msgs::LaserScan::ConstPtr& msg);
@@ -110,7 +114,7 @@ private:
   ros::NodeHandle& nh;
   std::string config_path;
 
-  ayanami::abstract::AbstractNavigation::Ptr navigation_plugin;
+  ayanami::abstract::AbstractNavigation::Ptr navigation_module;
   // Extension modules all derive from ayanami::ExtensionModule (no
   // ROS-specific subclasses): input belongs to AyanamiROS; output publishing is
   // done by the extension itself (e.g. rviz_viewer) at construction time.
@@ -138,6 +142,10 @@ private:
   std::optional<ayanami::geometry_msgs::PoseStamped> pending_goal;
   std::mutex tf_edge_mutex;
   std::map<std::pair<std::string, std::string>, bool> tf_edge_static;
+  /// @brief Per-edge last sync timestamp (rate gating for tf_sync_edges).
+  /// Lazily resized to tfSyncEdges().size() (edges are fixed after
+  /// construction). Guarded by sync_mutex.
+  std::vector<std::chrono::steady_clock::time_point> edge_last_sync;
   // TF missing-edge diagnostics (maintained by the 50Hz loop): first failure
   // time per edge + last diagnostic log time. The sensor callback path does not
   // block (timeout=0); diagnostics are only emitted by the loop's low-frequency

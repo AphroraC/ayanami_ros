@@ -4,13 +4,13 @@
 // M1 config set + config_ros.json) + the real rviz_viewer extension
 // (libayanami_rviz_viewer.so) to verify:
 // 1. AyanamiROS construction completes in order: GlobalConfig ->
-// loadExtensionModules -> loadNavigationPlugin (dlopen
+// loadExtensionModules -> loadNavigationModule (dlopen
 // libayanami_costmap_navigation.so + initialize + start) -> subscribeTopics.
 // 2. Extensions register before navigation->start: the
 // on_costmap_visualization subscription registered during rviz_viewer
 // construction must receive start's first wave of visualization emits
 // (via the extern "C" counting queries exported by the rviz_viewer .so).
-// 3. extension_modules / navigation_plugin members in place; start/stop
+// 3. extension_modules / navigation_module members in place; start/stop
 // without crashing.
 
 #include <dlfcn.h>
@@ -49,7 +49,7 @@ void writeFile(const std::filesystem::path& path,
   ofs << content;
 }
 
-std::string plugin_json(const std::string& module, const std::string& name,
+std::string module_json(const std::string& module, const std::string& name,
                         const std::string& so_name) {
   return "\"" + module + "\": {\"name\": \"" + name +
          "\", \"so_name\": \"" + so_name + "\"}";
@@ -69,7 +69,7 @@ std::string free_pgm(int width, int height, int max_value) {
 
 // Full M1 config set (modeled on the headless_e2e structure) +
 // config_ros.json.
-// Plugin .so files use bare names: the catkin test environment's
+// Module .so files use bare names: the catkin test environment's
 // LD_LIBRARY_PATH already contains devel/lib.
 std::filesystem::path makeConfigDir() {
   const auto dir =
@@ -111,7 +111,7 @@ std::filesystem::path makeConfigDir() {
 
   writeFile(dir / "costmap_smac_planner.json",
              "{\n  " +
-                 plugin_json("planner", "costmap_smac",
+                 module_json("planner", "costmap_smac",
                              "libayanami_costmap_smac_planner.so") +
                  ",\n  \"costmap_smac_planner\": {\n"
                  "    \"use_diagonal\": true,\n    \"tolerance\": 0.0,\n"
@@ -120,14 +120,14 @@ std::filesystem::path makeConfigDir() {
                  "  }\n}\n");
   writeFile(dir / "costmap_savitzky_smoother.json",
              "{\n  " +
-                 plugin_json("smoother", "costmap_savitzky",
+                 module_json("smoother", "costmap_savitzky",
                              "libayanami_costmap_savitzky_smoother.so") +
                  ",\n  \"costmap_savitzky_smoother\": {\n"
                  "    \"do_refinement\": true,\n    \"refinement_num\": 2\n"
                  "  }\n}\n");
   writeFile(dir / "costmap_pid_controller.json",
              "{\n  " +
-                 plugin_json("controller", "costmap_pid",
+                 module_json("controller", "costmap_pid_controller",
                              "libayanami_costmap_pid_controller.so") +
                  ",\n  \"costmap_pid_controller\": {\n"
                  "    \"max_vel_x\": 2.0,\n    \"max_vel_theta\": 1.0,\n"
@@ -170,6 +170,11 @@ std::filesystem::path makeConfigDir() {
   }
 
   writeFile(dir / "static_map.pgm", free_pgm(20, 20, 254));
+  // Core contract: a static map is a PGM + JSON metadata PAIR (nav.json
+  // semantics: resolution + origin); without the metadata the
+  // configureCoreMaps static-layer load fails.
+  writeFile(dir / "static_map.json",
+            R"({"map": {"resolution": 0.5, "origin": [0.0, 0.0, 0.0]}})");
 
   writeFile(dir / "BT" / "navigation.xml",
              R"(<root BTCPP_format="4" main_tree_to_execute="NavigateWithReplanningAndSmoothing">
@@ -200,11 +205,11 @@ std::filesystem::path makeConfigDir() {
       </PipelineSequence>
       <ReactiveFallback name="RecoveryActions">
         <GoalUpdated goal="{goal}"/>
-        <RoundRobin name="RecoveryActions">
+        <RecoverySequence name="RecoveryActions">
           <Sequence><Recovery recovery="{spin_id}"/>    <AlwaysFailure/></Sequence>
           <Sequence><Recovery recovery="{wait_id}"/>    <AlwaysFailure/></Sequence>
           <Sequence><Recovery recovery="{backup_id}"/>  <AlwaysFailure/></Sequence>
-        </RoundRobin>
+        </RecoverySequence>
       </ReactiveFallback>
     </RecoveryNode>
   </BehaviorTree>
@@ -247,7 +252,7 @@ int rvizViewerCostmapPubCount() {
   return getter();
 }
 
-TEST(AyanamiROS, initLoadExtensionsBeforeNavigationPlugin) {
+TEST(AyanamiROS, initLoadExtensionsBeforeNavigationModule) {
   const auto config_dir = makeConfigDir();
   ros::NodeHandle nh("~");
   // No roscore: nh.setParam would fail; use AyanamiROS's env fallback.
@@ -259,18 +264,18 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationPlugin) {
   // create_extension_module).
   ASSERT_EQ(node.extensionModules().size(), 1u);
 
-  // 2) Core navigation host plugin loaded (dlopen
+  // 2) Core navigation host module loaded (dlopen
   // libayanami_costmap_navigation.so + initialize + start).
-  ASSERT_NE(node.navigationPlugin(), nullptr);
+  ASSERT_NE(node.navigationModule(), nullptr);
 
   // 3) Load ordering: extensions register before navigation->start. The
-  // constructor's loadNavigationPlugin->start emits on_costmap_visualization;
+  // constructor's loadNavigationModule->start emits on_costmap_visualization;
   // if the order is wrong (nav before ext), rviz_viewer's subscription is not
   // registered and the count stays 0. A count > 0 here proves extension
   // construction completed before navigation start.
   const int emits = rvizViewerCostmapPubCount();
   EXPECT_GT(emits, 0) <<
-      "extension subscriptions must register before navigation_plugin->start()";
+      "extension subscriptions must register before navigation_module->start()";
   EXPECT_EQ(node.configPath(), config_dir.string());
 
   // 4) start enters the loop, stop joins; no hang, no segfault.
@@ -279,6 +284,31 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationPlugin) {
     ros::WallDuration(0.15).sleep();
     node.stop();
   });
+}
+
+TEST(AyanamiROS, robotFrameMismatchRefusesToStart) {
+  // robot_frame is owned by the navigation config; config_ros only mirrors it.
+  // The check used to live in the core's CostmapNavigationServer as a
+  // spdlog::error + assert -- and the assert was compiled out in Release, so a
+  // mismatch silently built TF edges around two different robot frames.
+  const auto config_dir = makeConfigDir();
+  ros::NodeHandle nh("~");
+  setenv("AYANAMI_CONFIG_PATH", config_dir.string().c_str(), 1);
+
+  // Re-point config_ros at a different robot frame than costmap_navigation.json.
+  writeFile(config_dir / "config_ros.json",
+            "{\n  \"ayanami_ros\": {\n"
+            "    \"laserscan_topic\": \"/scan\",\n"
+            "    \"pointcloud_topic\": \"/velodyne_points\",\n"
+            "    \"odom_topic\": \"/odom\",\n"
+            "    \"goal_topic\": \"/move_base_simple/goal\",\n"
+            "    \"map_frame\": \"map\",\n"
+            "    \"odom_frame\": \"odom\",\n"
+            "    \"robot_frame\": \"base_link_mismatch\",\n"
+            "    \"tf_sync_rate\": 50.0\n"
+            "  }\n}\n");
+
+  EXPECT_THROW(ayanami_ros::AyanamiROS node(nh), std::runtime_error);
 }
 
 TEST(AyanamiROS, emptyExtensionList) {
@@ -292,7 +322,7 @@ TEST(AyanamiROS, emptyExtensionList) {
 
   ayanami_ros::AyanamiROS node(nh);
   EXPECT_EQ(node.extensionModules().size(), 0u);
-  ASSERT_NE(node.navigationPlugin(), nullptr);
+  ASSERT_NE(node.navigationModule(), nullptr);
   EXPECT_NO_THROW({
     node.start();
     ros::WallDuration(0.15).sleep();
@@ -320,7 +350,7 @@ TEST(AyanamiROS, goalMailboxIsLatestWinsAndDrainsAtMostLatest) {
   setenv("AYANAMI_CONFIG_PATH", config_dir.string().c_str(), 1);
 
   ayanami_ros::AyanamiROS node(nh);
-  ASSERT_NE(node.navigationPlugin(), nullptr);
+  ASSERT_NE(node.navigationModule(), nullptr);
 
   // Two submitGoal calls -> only the latest one remains in the mailbox
   // (latest wins, no queueing).
@@ -350,13 +380,13 @@ TEST(AyanamiROS, odomVelocityWiredIntoRobotStateController) {
   setenv("AYANAMI_CONFIG_PATH", config_dir.string().c_str(), 1);
 
   ayanami_ros::AyanamiROS node(nh);
-  ASSERT_NE(node.navigationPlugin(), nullptr);
+  ASSERT_NE(node.navigationModule(), nullptr);
   auto& rsc = ayanami::components::RobotStateController::instance();
   rsc.resetVelocity();
-  // During AyanamiROS construction, navigation_plugin->initialize already
+  // During AyanamiROS construction, navigation_module->initialize already
   // initialized the singleton with the config frames
   // (map/odom/base_footprint).
-  EXPECT_EQ(rsc.getRobotFrame(), "base_footprint");
+  EXPECT_EQ(rsc.robotFrame(), "base_footprint");
 
   ayanami::geometry_msgs::TwistStamped twist;
   twist.header.frame_id = "base_footprint";
@@ -376,24 +406,24 @@ TEST(AyanamiROS, odomVelocityWiredIntoRobotStateController) {
 // callbacks deliver directly to the host AbstractNavigation's
 // setPointcloud/setLaserScan (input/output layering); empty messages are
 // silently ignored without crashing.
-TEST(AyanamiROS, obstacleInputWiredToHostPluginWithoutCrash) {
+TEST(AyanamiROS, obstacleInputWiredToHostModuleWithoutCrash) {
   const auto config_dir = makeConfigDir();
   ros::NodeHandle nh("~");
   setenv("AYANAMI_CONFIG_PATH", config_dir.string().c_str(), 1);
 
   ayanami_ros::AyanamiROS node(nh);
-  auto* plugin = node.navigationPlugin().get();
-  ASSERT_NE(plugin, nullptr);
+  auto* module = node.navigationModule().get();
+  ASSERT_NE(module, nullptr);
 
   // Empty pointcloud / laserscan -> the rasterization pipeline returns early,
   // no crash.
   ayanami::sensor_msgs::PointCloud2 cloud;
   ayanami::sensor_msgs::LaserScan scan;
-  plugin->setPointcloud(cloud);
-  plugin->setLaserScan(scan);
+  module->setPointcloud(cloud);
+  module->setLaserScan(scan);
   EXPECT_NO_THROW({
-    plugin->setPointcloud(cloud);
-    plugin->setLaserScan(scan);
+    module->setPointcloud(cloud);
+    module->setLaserScan(scan);
   });
 
   node.stop();

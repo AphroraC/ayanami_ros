@@ -12,7 +12,7 @@
 // observation_sources uses LaserScan (incl. scan), obstacle_range/raytrace_range,
 // inscribed_radius 0.3 (vehicle body), inflation_radius 0.3+safety margin.
 // 4. costmap_navigation.json: robot_frame=base_footprint consistent with
-// config_ros; *_id keeps the full plugin name (unbroken).
+// config_ros; *_id keeps the full module name (unbroken).
 // 5. static_map points to a loadable PGM (M1 assets/nav.pgm, box_house
 // compatible), and nav_demo/map/nav.pgm loads compatibly with the same loader
 // (StaticLayer) (M1 cross-compatibility).
@@ -79,7 +79,7 @@ bool pgm_loadable(const std::string& path) {
 
 TEST(ConfigSpecVerify, configRosIsInputBoundaryOnly) {
   // config_ros.json's single responsibility = the ROS input boundary
-  // (subscriptions + TF + host plugin assembly). The planner -> smoother ->
+  // (subscriptions + TF + host module assembly). The planner -> smoother ->
   // controller path data flow lives entirely inside the C++ core (BT
   // blackboard + TaskHandle) and never touches ROS; output topics belong to
   // config_extensions.json (published on the bypass via rviz_viewer's global
@@ -156,8 +156,8 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
   // rviz_viewer output bridge topics (extension): all ayanami outputs are
   // published as ROS messages by rviz_viewer through global callbacks; topic
   // names are configured in the rviz_viewer section of config_extensions.json
-  // (asuka mode: the plugin parameter section has the same name as the
-  // plugin).
+  // (asuka mode: the module parameter section has the same name as the
+  // module).
   initConfig();
   ayanami::Config cfg(
       ayanami::GlobalConfig::getConfigPath("config_extensions"));
@@ -202,31 +202,64 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
   EXPECT_DOUBLE_EQ(cfg.param<double>(chassis, "power_limit", -1.0), 100.0);
 }
 
-TEST(ConfigSpecVerify, tfSyncEdgesAreValidPairs) {
+TEST(ConfigSpecVerify, tfSyncEdgesUseStringFormat) {
+  // New format: "target-source[:rate]hz" per entry; the rate suffix is
+  // optional (falls back to tf_sync_rate) and required syntax is strict:
+  // non-empty frames, no empty rate.
   initConfig();
   ayanami::Config cfg(
       ayanami::GlobalConfig::getConfigPath("config_ros"));
-  const auto edges = cfg.param<std::vector<std::vector<std::string>>>(
+  const auto entries = cfg.param<std::vector<std::string>>(
       "ayanami_ros", "tf_sync_edges", {});
-  ASSERT_FALSE(edges.empty()) << "tf_sync_edges must not be empty";
-  for (const auto& edge : edges) {
-    ASSERT_EQ(edge.size(), 2u) << "each tf_sync_edges entry must have exactly 2 items";
-    EXPECT_FALSE(edge[0].empty());
-    EXPECT_FALSE(edge[1].empty());
+  ASSERT_FALSE(entries.empty()) << "tf_sync_edges cannot be empty";
+  for (const auto& entry : entries) {
+    const auto dash = entry.rfind('-');
+    ASSERT_NE(dash, std::string::npos) << entry;
+    ASSERT_GT(dash, 0u) << entry;
+    ASSERT_LT(dash + 1, entry.size()) << entry;
+    const auto colon = entry.rfind(':');
+    if (colon != std::string::npos) {
+      ASSERT_GT(colon, dash) << entry;
+      std::string rate = entry.substr(colon + 1);
+      for (auto& ch : rate) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+      }
+      if (rate.size() >= 2 && rate.compare(rate.size() - 2, 2, "hz") == 0) {
+        rate.erase(rate.size() - 2);
+      }
+      ASSERT_FALSE(rate.empty()) << entry;
+      EXPECT_EQ(rate.find_first_not_of("0123456789."), std::string::npos)
+          << "invalid rate in " << entry;
+    }
   }
 }
 
-TEST(ConfigSpecVerify, tfStaticEdgesAreValidSyncEdges) {
+TEST(ConfigSpecVerify, tfStaticEdgesAreSyncEdgePairs) {
+  // Every tf_static_edges entry must denote the same (target, source) pair as
+  // some tf_sync_edges entry, independent of the optional rate suffix.
   initConfig();
   ayanami::Config cfg(
       ayanami::GlobalConfig::getConfigPath("config_ros"));
-  const auto sync = cfg.param<std::vector<std::vector<std::string>>>(
-      "ayanami_ros", "tf_sync_edges", {});
-  const auto statics = cfg.param<std::vector<std::vector<std::string>>>(
+  auto split = [](const std::string& entry) {
+    std::string pair_part = entry;
+    const auto colon = entry.rfind(':');
+    if (colon != std::string::npos) {
+      pair_part = entry.substr(0, colon);
+    }
+    const auto dash = pair_part.rfind('-');
+    return std::make_pair(pair_part.substr(0, dash), pair_part.substr(dash + 1));
+  };
+  std::vector<std::pair<std::string, std::string>> sync;
+  for (const auto& entry : cfg.param<std::vector<std::string>>(
+           "ayanami_ros", "tf_sync_edges", {})) {
+    sync.push_back(split(entry));
+  }
+  const auto statics = cfg.param<std::vector<std::string>>(
       "ayanami_ros", "tf_static_edges", {});
-  for (const auto& edge : statics) {
-    ASSERT_EQ(edge.size(), 2u);
-    EXPECT_NE(std::find(sync.begin(), sync.end(), edge), sync.end());
+  for (const auto& entry : statics) {
+    const auto pair = split(entry);
+    EXPECT_NE(std::find(sync.begin(), sync.end(), pair), sync.end())
+        << "static edge " << entry << " has no matching sync edge";
   }
 }
 
@@ -298,9 +331,9 @@ TEST(ConfigSpecVerify, robotFrameSingleSource) {
   EXPECT_EQ(nav_frame, ros_frame);
 }
 
-TEST(ConfigSpecVerify, navigationIdsKeepFullPluginNames) {
+TEST(ConfigSpecVerify, navigationIdsKeepFullModuleNames) {
   initConfig();
-  // Plugin id == plugin full name (incl. the _recovery suffix), unbroken.
+  // Module id == module full name (incl. the _recovery suffix), unbroken.
   // ids are uniformly read from the name field of the component json pointed
   // to by the navigation section's config_* keys (recovery grouped by role).
   auto component_name = [](const std::string& key,
@@ -353,7 +386,7 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullPluginNames) {
   EXPECT_EQ(component_name("config_smoother", "smoother"),
             "costmap_savitzky_smoother");
   EXPECT_EQ(component_name("config_controller", "controller"),
-            "costmap_pid");
+            "costmap_pid_controller");
   EXPECT_EQ(recovery_name_by_role("spin"), "costmap_spin_recovery");
   EXPECT_EQ(recovery_name_by_role("wait"), "costmap_wait_recovery");
   EXPECT_EQ(recovery_name_by_role("backup"), "costmap_back_up_recovery");

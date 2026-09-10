@@ -19,40 +19,128 @@
 namespace ayanami_ros {
 namespace {
 
-// Reads the tf_sync_edges list [[target, source], ...] via the Config API
-// (config_ros.json) (§4.4). Each edge must have exactly 2 items (size==2),
-// otherwise it is skipped; when the list is missing/empty, three default edges
-// are built from the configured map_frame/odom_frame/robot_frame.
-std::vector<std::pair<std::string, std::string>> readTfSyncEdges(const std::string& config_ros_path) {
+// tf_sync_edges / tf_static_edges entry format (config_ros.json):
+//   "<target>-<source>[:<rate>hz]"   e.g. "map-odom:50hz", "base_link-laser"
+// The rate suffix is optional; a missing suffix falls back to the global
+// tf_sync_rate. For tf_static_edges the suffix is accepted but ignored
+// (static transforms are re-asserted; their value never changes). The legacy
+// [[target, source]] array format is still accepted (deprecated; every edge
+// gets the default rate).
+TfSyncEdge parseTfEdge(const std::string& entry, double default_rate,
+                       std::pair<std::string, std::string>& pair_out) {
+  TfSyncEdge edge;
+  // Rate suffix: everything after the last ':' (frame names never contain ':').
+  double rate = default_rate;
+  std::string pair_part = entry;
+  const auto colon = entry.rfind(':');
+  if (colon != std::string::npos) {
+    pair_part = entry.substr(0, colon);
+    std::string rate_part = entry.substr(colon + 1);
+    for (auto& ch : rate_part) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (rate_part.size() >= 2 &&
+        rate_part.compare(rate_part.size() - 2, 2, "hz") == 0) {
+      rate_part.erase(rate_part.size() - 2);
+    }
+    try {
+      rate = std::stod(rate_part);
+    } catch (const std::exception&) {
+      rate = -1.0;
+    }
+    if (!(rate > 0.0)) {
+      spdlog::warn("tf edge '{}' has an invalid rate suffix; using the "
+                   "default {}hz",
+                   entry, default_rate);
+      rate = default_rate;
+    }
+  }
+  // Edge: split at the LAST '-' (the source/child frame name must not
+  // contain '-', see the TfSyncEdge doc).
+  const auto dash = pair_part.rfind('-');
+  if (dash == std::string::npos || dash == 0 || dash + 1 >= pair_part.size()) {
+    spdlog::warn("tf edge '{}' is not '<target>-<source>', skipped", entry);
+    edge.rate_hz = -1.0;  // invalid-entry marker
+    pair_out = {entry, {}};
+    return edge;
+  }
+  edge.target = pair_part.substr(0, dash);
+  edge.source = pair_part.substr(dash + 1);
+  edge.rate_hz = rate;
+  pair_out = {edge.target, edge.source};
+  return edge;
+}
+
+std::vector<TfSyncEdge> readTfSyncEdges(const std::string& config_ros_path) {
   ayanami::Config config_ros(config_ros_path);
   const std::string kSec = "ayanami_ros";
   const std::string map_frame = config_ros.param<std::string>(kSec, "map_frame", "map");
   const std::string odom_frame = config_ros.param<std::string>(kSec, "odom_frame", "odom");
   const std::string robot_frame = config_ros.param<std::string>(kSec, "robot_frame", "base_footprint");
+  const double default_rate =
+      config_ros.param<double>(kSec, "tf_sync_rate", 50.0);
 
-  std::vector<std::pair<std::string, std::string>> edges;
-  const auto raw = config_ros.param<std::vector<std::vector<std::string>>>(kSec, "tf_sync_edges", {});
-  for (const auto& edge : raw) {
-    if (edge.size() != 2) {
-      spdlog::warn("tf_sync_edges entry has size {} != 2, skipped", edge.size());
-      continue;
+  std::vector<TfSyncEdge> edges;
+  // New format: a plain vector<string> of "target-source[:rate]hz" entries.
+  std::vector<std::string> raw;
+  try {
+    raw = config_ros.param<std::vector<std::string>>(kSec, "tf_sync_edges", {});
+  } catch (const std::exception&) {
+    // Legacy format (deprecated): [[target, source], ...].
+    for (const auto& edge : config_ros.param<std::vector<std::vector<std::string>>>(
+             kSec, "tf_sync_edges", {})) {
+      if (edge.size() == 2) {
+        raw.push_back(edge[0] + "-" + edge[1]);
+      }
     }
-    edges.emplace_back(edge[0], edge[1]);
+    if (!raw.empty()) {
+      spdlog::warn("tf_sync_edges uses the deprecated [[target, source]] "
+                   "array format; migrate to \"target-source:ratehz\" strings");
+    }
+  }
+  for (const auto& entry : raw) {
+    std::pair<std::string, std::string> pair_out;
+    const TfSyncEdge edge = parseTfEdge(entry, default_rate, pair_out);
+    if (edge.rate_hz > 0.0) {
+      edges.push_back(edge);
+    }
   }
   if (edges.empty()) {
-    // Default: map->odom, odom->base_link, map->base_link.
-    edges = {{map_frame, odom_frame}, {odom_frame, robot_frame}, {map_frame, robot_frame}};
+    // Default: map-odom, odom-base_link, map-base_link (all default rate).
+    const std::pair<std::string, std::string> defaults[] = {
+        {map_frame, odom_frame}, {odom_frame, robot_frame},
+        {map_frame, robot_frame}};
+    for (const auto& [t, src] : defaults) {
+      edges.push_back({t, src, default_rate});
+    }
   }
   return edges;
 }
 
-std::set<std::pair<std::string, std::string>> readTfStaticEdges(const std::string& config_ros_path) {
+std::set<std::pair<std::string, std::string>> readTfStaticEdges(
+    const std::string& config_ros_path) {
   ayanami::Config config_ros(config_ros_path);
+  const double default_rate =
+      config_ros.param<double>("ayanami_ros", "tf_sync_rate", 50.0);
   std::set<std::pair<std::string, std::string>> edges;
-  const auto raw = config_ros.param<std::vector<std::vector<std::string>>>("ayanami_ros", "tf_static_edges", {});
-  for (const auto& edge : raw) {
-    if (edge.size() == 2) {
-      edges.emplace(edge[0], edge[1]);
+  std::vector<std::string> raw;
+  try {
+    raw = config_ros.param<std::vector<std::string>>("ayanami_ros",
+                                                     "tf_static_edges", {});
+  } catch (const std::exception&) {
+    for (const auto& edge : config_ros.param<std::vector<std::vector<std::string>>>(
+             "ayanami_ros", "tf_static_edges", {})) {
+      if (edge.size() == 2) {
+        raw.push_back(edge[0] + "-" + edge[1]);
+      }
+    }
+  }
+  for (const auto& entry : raw) {
+    std::pair<std::string, std::string> pair_out;
+    // Static edge: the rate suffix is accepted but ignored (format check only).
+    parseTfEdge(entry, default_rate, pair_out);
+    if (!pair_out.second.empty()) {
+      edges.insert(pair_out);
     }
   }
   return edges;
@@ -92,12 +180,15 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   goal_topic = config_ros.param<std::string>("ayanami_ros", "goal_topic", "/move_base_simple/goal");
   map_frame = config_ros.param<std::string>("ayanami_ros", "map_frame", "map");
   odom_frame = config_ros.param<std::string>("ayanami_ros", "odom_frame", "odom");
-  robot_frame = config_ros.param<std::string>("ayanami_ros", "robot_frame", "base_footprint");
+  // Default mirrors the core's default (config_navigation.json::
+  // navigation.robot_frame). Keeping the two defaults equal means "neither
+  // config sets it" resolves to one frame, not a silent mismatch.
+  robot_frame = config_ros.param<std::string>("ayanami_ros", "robot_frame", "base_link");
   tf_sync_rate = config_ros.param<double>("ayanami_ros", "tf_sync_rate", 50.0);
  // tf_cache_duration: TransformStore dynamic-edge lookback window by stamp
  // (seconds, default 10s aligned with tf2 DEFAULT_MAX_STORAGE_TIME). Must be
  // configured before any TF write (this constructor runs before
- // loadNavigationPlugin/start, so this is the only valid configuration point).
+ // loadNavigationModule/start, so this is the only valid configuration point).
   const double tf_cache_duration =
       config_ros.param<double>("ayanami_ros", "tf_cache_duration", 10.0);
   ayanami::interfaces::TransformStore::instance().configureCacheDuration(
@@ -108,11 +199,19 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
       "ayanami_ros", "localization_clear_pos_threshold", 2.0);
   navigation_so_name = config_ros.param<std::string>("ayanami_ros", "navigation_so_name", navigation_so_name);
 
+  // robot_frame has one owner (config_navigation.json::navigation.robot_frame);
+  // config_ros only mirrors it for the ROS-side TF producers. A mismatch means
+  // the stack would build TF edges and costmap geometry around different robot
+  // frames, so refuse to start rather than fail subtly at runtime. This check
+  // lives here, in the ROS boundary, because it is a ROS-config consistency
+  // rule -- the pure-C++ core has no business reading config_ros.json.
+  verifyRobotFrameMatchesNavigation();
+
   // Order-critical: extensions must register their NavigationCallbacks
-  // subscriptions before navigation_plugin->start, otherwise the first wave of
+  // subscriptions before navigation_module->start, otherwise the first wave of
   // startup visualization emits is missed.
   loadExtensionModules();
-  loadNavigationPlugin(config_ros);
+  loadNavigationModule(config_ros);
   subscribeTopics();
 
   spdlog::info(
@@ -144,10 +243,64 @@ void AyanamiROS::stop() {
     tf_queue_thread.join();
   }
   tf_queue.clear();
-  if (navigation_plugin) {
-    navigation_plugin->stop();
+  if (navigation_module) {
+    navigation_module->stop();
   }
 }
+
+void AyanamiROS::verifyRobotFrameMatchesNavigation() {
+  // The core owns robot_frame (config_navigation.json::navigation.robot_frame);
+  // config_ros only mirrors it for the ROS-side TF producers. A mismatch means
+  // TF edges and costmap geometry would be built around different robot frames
+  // -- a failure that surfaces much later as an unexplainable TF gap, so it is
+  // checked here, on the ROS boundary, and refused at startup.
+  //
+  // This used to be an assert inside the core's CostmapNavigationServer. That
+  // was wrong twice over: the pure-C++ core has no business opening
+  // config_ros.json, and the assert was compiled out in the Release builds.
+  const std::string nav_config =
+      ayanami::GlobalConfig::getConfigPath("config_navigation");
+  ayanami::Config nav_cfg(nav_config);
+  // Same literal default as the core's reader, so an omitted key compares equal
+  // instead of tripping the check.
+  const std::string nav_frame =
+      nav_cfg.param<std::string>("navigation", "robot_frame", "base_link");
+  if (robot_frame != nav_frame) {
+    throw std::runtime_error(
+        "robot_frame mismatch: config_ros.json::ayanami_ros.robot_frame='" +
+        robot_frame +
+        "' vs config_navigation.json::navigation.robot_frame='" + nav_frame +
+        "'. The navigation config owns the robot frame; config_ros must mirror "
+        "it (or omit the key to inherit the default).");
+  }
+}
+
+namespace {
+
+/// @brief Logical module name from its .so: the base name without the library
+/// prefix and extension (libayanami_rviz_viewer.so -> rviz_viewer). It is the
+/// section key the module reads its parameters from, so the loader can hand a
+/// module its context without the module knowing the config layout.
+std::string extensionNameFromSo(const std::string& so_name) {
+  std::string base = so_name;
+  const std::size_t slash = base.find_last_of('/');
+  if (slash != std::string::npos) {
+    base = base.substr(slash + 1);
+  }
+  for (const std::string prefix : {"libayanami_", "lib"}) {
+    if (base.rfind(prefix, 0) == 0) {
+      base = base.substr(prefix.size());
+      break;
+    }
+  }
+  const std::size_t dot = base.rfind(".so");
+  if (dot != std::string::npos && dot + 3 == base.size()) {
+    base = base.substr(0, dot);
+  }
+  return base;
+}
+
+}  // namespace
 
 void AyanamiROS::loadExtensionModules() {
   // Single source for the extension manifest =
@@ -162,7 +315,13 @@ void AyanamiROS::loadExtensionModules() {
       "extensions", "loading_extension_modules", {});
   for (const auto& module : modules) {
     spdlog::info("load ayanami_ros extension module {}", module);
-    auto ext = ayanami::ExtensionModule::load_module(module);
+    // The extension's context: logical name + the extensions config file. The
+    // name is derived from the .so the same way the core derives it
+    // (libayanami_<name>.so), and it doubles as the module's parameter section
+    // key -- so the module never has to resolve the config path itself.
+    const std::string name = extensionNameFromSo(module);
+    auto ext = ayanami::ExtensionModule::loadModule(
+        module, ayanami::ModuleContext{name, extensions_config});
     if (!ext) {
       spdlog::warn("failed to load extension module {}", module);
       continue;
@@ -171,21 +330,21 @@ void AyanamiROS::loadExtensionModules() {
   }
 }
 
-void AyanamiROS::loadNavigationPlugin(const ayanami::Config& config_ros) {
+void AyanamiROS::loadNavigationModule(const ayanami::Config& config_ros) {
   (void)config_ros;
-  spdlog::info("load ayanami navigation plugin {}", navigation_so_name);
-  // Common factory loading (4): ExtensionModule::load_module ->
+  spdlog::info("load ayanami navigation module {}", navigation_so_name);
+  // Common factory loading (4): ExtensionModule::loadModule ->
   // typed dynamic_pointer_cast<AbstractNavigation> (shared ownership).
-  auto ext = ayanami::ExtensionModule::load_module(navigation_so_name);
+  auto ext = ayanami::ExtensionModule::loadModule(navigation_so_name);
   if (!ext) {
-    throw std::runtime_error("Failed to load ayanami navigation plugin: " + navigation_so_name);
+    throw std::runtime_error("Failed to load ayanami navigation module: " + navigation_so_name);
   }
-  navigation_plugin = std::dynamic_pointer_cast<ayanami::abstract::AbstractNavigation>(std::move(ext));
-  if (!navigation_plugin) {
-    throw std::runtime_error("ayanami navigation plugin '" + navigation_so_name + "' is not an AbstractNavigation");
+  navigation_module = std::dynamic_pointer_cast<ayanami::abstract::AbstractNavigation>(std::move(ext));
+  if (!navigation_module) {
+    throw std::runtime_error("ayanami navigation module '" + navigation_so_name + "' is not an AbstractNavigation");
   }
-  navigation_plugin->initialize(config_path);
-  navigation_plugin->start();
+  navigation_module->initialize(config_path);
+  navigation_module->start();
 }
 
 void AyanamiROS::subscribeTopics() {
@@ -231,7 +390,7 @@ void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
     msg->pose.position.x,
     msg->pose.position.y);
   // The ROS callback only converts + overwrites the mailbox (latest wins); the
-  // actual dispatch to the navigation plugin is done by the loop thread's
+  // actual dispatch to the navigation module is done by the loop thread's
   // drainPendingGoal (does not block the ROS callback thread).
   submitGoal(fromRosPose(*msg));
 }
@@ -251,8 +410,8 @@ bool AyanamiROS::drainPendingGoal() {
     goal = *pending_goal;
     pending_goal.reset();
   }
-  if (navigation_plugin) {
-    navigation_plugin->setGoal(goal);
+  if (navigation_module) {
+    navigation_module->setGoal(goal);
   }
   return true;
 }
@@ -306,12 +465,12 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
     syncTransformsToCore(sensor_stamp, 0.0);
   }
   syncTransformsToCore(ros::Time(0), 0.0);
-  if (!navigation_plugin) {
+  if (!navigation_module) {
     return;
   }
-  // Obstacle observation input delivered directly to the host plugin (not via
+  // Obstacle observation input delivered directly to the host module (not via
   // global bypass slots; input/output layering discipline).
-  navigation_plugin->setPointcloud(cloud);
+  navigation_module->setPointcloud(cloud);
 }
 
 void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
@@ -320,10 +479,10 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
     syncTransformsToCore(sensor_stamp, 0.0);
   }
   syncTransformsToCore(ros::Time(0), 0.0);
-  if (!navigation_plugin) {
+  if (!navigation_module) {
     return;
   }
-  navigation_plugin->setLaserScan(scan);
+  navigation_module->setLaserScan(scan);
 }
 
 void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
@@ -377,9 +536,25 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
   // writer's ordering assumptions.
   std::lock_guard<std::mutex> sync_lock(sync_mutex);
   const auto now = std::chrono::steady_clock::now();
-  for (const auto& edge : tf_listener.tfSyncEdges()) {
-    const std::string& target = edge.first;
-    const std::string& source = edge.second;
+  const auto& edges = tf_listener.tfSyncEdges();
+  // Per-edge sync-rate gating (tf_sync_edges "<target>-<source>:<rate>hz"):
+  // an edge is sampled at most at its configured rate, no matter whether this
+  // pass was driven by the loop, the event-driven /tf callback or a
+  // sensor-callback TF pre-sync. Fresh /tf data lands within one configured
+  // period at worst.
+  if (edge_last_sync.size() != edges.size()) {
+    edge_last_sync.assign(edges.size(), std::chrono::steady_clock::time_point{});
+  }
+  for (std::size_t edge_index = 0; edge_index < edges.size(); ++edge_index) {
+    const auto& edge = edges[edge_index];
+    const auto period = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::duration<double>(1.0 / std::max(edge.rate_hz, 1e-6)));
+    if (now - edge_last_sync[edge_index] < period) {
+      continue;
+    }
+    edge_last_sync[edge_index] = now;
+    const std::string& target = edge.target;
+    const std::string& source = edge.source;
     geometry_msgs::TransformStamped tf_msg;
     if (tf_listener.lookupTransform(target, source, stamp, tf_msg, timeout)) {
       {
@@ -439,12 +614,12 @@ void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
         if (localization_jump_prev_valid &&
             (localization_accum_yaw > localization_clear_yaw_threshold ||
              localization_accum_pos > localization_clear_pos_threshold)) {
-          if (navigation_plugin) {
+          if (navigation_module) {
             spdlog::info(
                 "accumulated motion since last clear (dyaw={:.3f} rad, "
                 "dpos={:.3f} m); clearing global dynamic costmap",
                 localization_accum_yaw, localization_accum_pos);
-            navigation_plugin->onLocalizationJump();
+            navigation_module->onLocalizationJump();
           }
           localization_accum_yaw = 0.0;
           localization_accum_pos = 0.0;
@@ -497,8 +672,8 @@ void AyanamiROS::checkTfHealth() {
   const auto now = std::chrono::steady_clock::now();
   std::string missing_edges;
   for (const auto& edge : tf_listener.tfSyncEdges()) {
-    const std::string& target = edge.first;
-    const std::string& source = edge.second;
+    const std::string& target = edge.target;
+    const std::string& source = edge.source;
     if (!tf_listener.canTransform(target, source, 0.0)) {
       if (!missing_edges.empty()) missing_edges += ", ";
       missing_edges += target + "<-" + source;
@@ -519,7 +694,7 @@ void AyanamiROS::checkTfHealth() {
     spdlog::warn(
         "ROS TF health check: unavailable edges [{}]. Current frame "
         "tree:\n{}\nIf odom<-base_footprint is missing, check that the "
-        "gazebo diff-drive plugin (libgazebo_ros_diff_drive, publishOdomTF) "
+        "gazebo diff-drive module (libgazebo_ros_diff_drive, publishOdomTF) "
         "loaded with the model; if map<-odom is missing, wait for or check "
         "AMCL; leftover simulation instances may publish duplicate TF "
         "frames",
@@ -539,8 +714,8 @@ void AyanamiROS::loop() {
       checkTfHealth();
       last_tf_health = std::chrono::steady_clock::now();
     }
-    if (navigation_plugin) {
-      navigation_plugin->spinOnce();
+    if (navigation_module) {
+      navigation_module->spinOnce();
     }
     drainPendingGoal();  // latest-wins goal mailbox: dispatches at most the current latest one per round
     ros::spinOnce();

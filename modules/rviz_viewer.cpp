@@ -82,34 +82,38 @@ const char* goalStatusName(ayanami::actions::GoalStatus status) {
 // feeds it into the core; all core outputs (the four action
 // goal/feedback/result kinds, cmd_vel, costmap visualization, robot state) are
 // read through this extension's NavigationCallbacks global callback
-// subscriptions and published as the corresponding ROS messages. This plugin
+// subscriptions and published as the corresponding ROS messages. This module
 // derives directly from ayanami::ExtensionModule; at construction time it
 // creates its own ros::NodeHandle and advertises + adds subscriptions
 // (triggered by the dlopen in AyanamiROS::loadExtensionModules, before
-// navigation_plugin->start, satisfying the ordering); at destruction time it
+// navigation_module->start, satisfying the ordering); at destruction time it
 // removes the callback ids. Does not include costmap_2d/* (red line): costmaps
 // are forwarded from the core OccupancyGrid as nav_msgs::OccupancyGrid.
 class RvizViewer final : public ayanami::ExtensionModule {
 public:
   RvizViewer() : nh("~") {
-    readConfig();
-    advertiseTopics();
     registerCallbacks();
   }
 
   ~RvizViewer() override { unregisterCallbacks(); }
 
+  /// @brief Parameters arrive AFTER a successful load, injected by the loader
+  /// (ModuleContext = logical name + the extensions config). The section key is
+  /// this module's own name, so the config layout stays outside the module --
+  /// it no longer resolves the config path itself.
+  void configureParameters(const ayanami::ModuleContext& context) override {
+    readConfig(context);
+    advertiseTopics();
+  }
+
 private:
-  void readConfig() {
-    // Single source for the extension's own parameters = the rviz_viewer
-    // section of config_extensions.json (asuka mode): config_ros only carries
-    // the ROS input boundary; every bypass visualization topic published by
-    // this plugin through global callback slots is configured here. When the
-    // file is missing/unreadable, Config is an empty document -> everything
-    // falls back to defaults.
-    const ayanami::Config extensions_config(
-        ayanami::GlobalConfig::getConfigPath("config_extensions"));
-    const std::string sec = "rviz_viewer";
+  void readConfig(const ayanami::ModuleContext& context) {
+    // Single source for the extension's own parameters = this module's section
+    // of the extensions config (config_ros only carries the ROS input
+    // boundary); every bypass visualization topic published through global
+    // callback slots is configured here.
+    const ayanami::Config& extensions_config = context.config;
+    const std::string& sec = context.name;
     planner_path_topic =
         extensions_config.param<std::string>(sec, "planner_path_topic",
                                              "/ayanami/planner/path");
@@ -155,6 +159,10 @@ private:
     navigation_status_topic =
         extensions_config.param<std::string>(sec, "navigation_status_topic",
                                              "/ayanami/navigation_status");
+    // Velocity body output: the controller's global on_velocity_command slot
+    // is republished here as the plain twist the chassis controller consumes.
+    cmd_vel_topic = extensions_config.param<std::string>(sec, "cmd_vel_topic",
+                                                         "/cmd_vel");
     g_planner_path_topic = planner_path_topic;
   }
 
@@ -191,19 +199,37 @@ private:
         nh.advertise<std_msgs::String>(recovery_status_topic, 1, true);
     navigation_status_pub =
         nh.advertise<std_msgs::String>(navigation_status_topic, 1);
+        cmd_vel_pub = nh.advertise<geometry_msgs::Twist>(cmd_vel_topic, 1);
     spdlog::info(
         "rviz_viewer publishers: planner_path={} smoother_path={} "
         "global_costmap={} local_costmap={} planner_goal={} smoother_input={} "
         "controller_path={} controller_status={} recovery_status={} "
-        "navigation_status={}",
+        "navigation_status={} cmd_vel={}",
         planner_path_topic, smoother_path_topic,
         global_costmap_topic, local_costmap_topic, planner_goal_topic,
         smoother_input_path_topic, controller_path_topic,
         controller_status_topic, recovery_status_topic,
-        navigation_status_topic);
+        navigation_status_topic, cmd_vel_topic);
   }
 
   void registerCallbacks() {
+    // Velocity body output: republish the controller's velocity command as
+    // geometry_msgs/Twist on cmd_vel_topic (rm_chassis_controllers
+    // ChassisBase input).
+    cb_velocity_cmd =
+        ayanami::interfaces::NavigationCallbacks::on_velocity_command.subscribe(
+            [this](const ayanami::geometry_msgs::TwistStamped& velocity) {
+              if (cmd_vel_pub) {
+                geometry_msgs::Twist cmd;
+                cmd.linear.x = velocity.twist.linear.x();
+                cmd.linear.y = velocity.twist.linear.y();
+                cmd.linear.z = velocity.twist.linear.z();
+                cmd.angular.x = velocity.twist.angular.x();
+                cmd.angular.y = velocity.twist.angular.y();
+                cmd.angular.z = velocity.twist.angular.z();
+                cmd_vel_pub.publish(cmd);
+              }
+            });
     cb_get_path_goal =
         ayanami::interfaces::NavigationCallbacks::on_get_path_goal.subscribe(
             [this](const ayanami::actions::GetPathGoal& goal) {
@@ -454,7 +480,8 @@ private:
       planner_feedback_pub, smoother_input_path_pub, smoother_feedback_pub,
       controller_path_pub, controller_feedback_pub, controller_status_pub,
       recovery_goal_pub, recovery_feedback_pub, recovery_status_pub,
-      navigation_status_pub;
+      navigation_status_pub, cmd_vel_pub;
+  std::string cmd_vel_topic = "/cmd_vel";
   std::string planner_path_topic = "/ayanami/planner/path";
   std::string smoother_path_topic = "/ayanami/smoother/path";
   std::string global_costmap_topic = "/ayanami/global_costmap";
