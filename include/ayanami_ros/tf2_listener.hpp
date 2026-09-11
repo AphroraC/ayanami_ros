@@ -1,9 +1,6 @@
 #pragma once
 
-#include <memory>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include <Eigen/Geometry>
 
@@ -16,43 +13,30 @@
 
 namespace ayanami_ros {
 
-/// @brief One configured sync edge with its own sync rate.
-///
-/// Config entry format (config_ros.json::tf_sync_edges / tf_static_edges):
-///   "<target>-<source>[:<rate>hz]"    e.g. "map-odom:50hz", "base_link-laser"
-/// The rate suffix is optional; a missing suffix falls back to the global
-/// tf_sync_rate. For tf_static_edges the suffix is accepted but ignored
-/// (static transforms are re-asserted, their value never changes).
-/// Constraint: the source (child) frame name must not contain '-'.
-struct TfSyncEdge {
-  std::string target;
-  std::string source;
-  double rate_hz{10.0};
-};
-
 /**
- * @brief TF2 wrapper: tf2_ros::Buffer + TransformListener (verbatim).
+ * @brief TF2 wrapper: tf2_ros::Buffer + TransformListener.
  *
  * The constructor creates the buffer + listener (spin_thread=true starts a
- * dedicated thread feeding the buffer) and stores tf_sync_edges (controlled by
- * config_ros.json, default [map->odom, odom->base_link, map->base_link]).
- * lookupTransform internally does lookupTransform(target, source, stamp,
- * ros::Duration(timeout)) -> tf2::transformToEigen -> Eigen::Isometry3d, and
- * returns false when tf2::TransformException is thrown.
+ * dedicated thread feeding the buffer). The auto-subscription is the ONLY
+ * insertion path -- every /tf and /tf_static message lands in the buffer
+ * exactly once. This object is installed into the core
+ * RobotStateController as the injected TF source: core threads query it
+ * on demand (tf2 interpolation + static edges included), so no periodic
+ * sampling into a core-side store exists anymore.
  *
- * Time semantics: stamp=ros::Time(0) means latest; the TransformStamped
- * overload also returns the real geometry_msgs::TransformStamped.header.stamp
- * provided by the buffer, so writing into the TransformStore does not need to
- * fake it with ros::Time::now().
+ * Timeout semantics: implemented as a steady-clock POLLING loop over
+ * canTransform (never tf2's own ros::Time-clocked wait, which stalls
+ * forever when /clock stops advancing); each probe is a zero-timeout
+ * lookup, so a warm-up gap costs at most one 5 ms poll.
  */
 class TF2Listener {
 public:
-  TF2Listener(ros::NodeHandle& nh, const std::vector<TfSyncEdge>& edges);
+  explicit TF2Listener(ros::NodeHandle& nh);
 
   /// @brief Looks up the source->target transform; stamp=ros::Time(0) means
   /// latest.
-  /// @return true fills @p out (the real header.stamp is returned as well),
-  /// false (no TF available within timeout seconds).
+  /// @return true fills @p out, false (no TF available within timeout
+  /// seconds; timeout <= 0 = single zero-timeout probe).
   bool lookupTransform(const std::string& target, const std::string& source,
                         const ros::Time& stamp,
                         geometry_msgs::TransformStamped& out,
@@ -60,29 +44,12 @@ public:
 
   /// @brief Eigen version of the above (delegates internally to the
   /// TransformStamped overload).
-  /// @return true fills @p out, false (no TF available within timeout seconds).
   bool lookupTransform(const std::string& target, const std::string& source,
                         const ros::Time& stamp, Eigen::Isometry3d& out,
                         double timeout = 0.0);
 
-  /// @brief List of configured tf sync edges (with per-edge sync rate).
-  const std::vector<TfSyncEdge>& tfSyncEdges() const { return tf_sync_edges; }
-
-  /// @brief Synchronously injects one /tf transform into the internal tf2
-  /// buffer.
-  ///
-  /// TransformListener inserts into the buffer asynchronously (separate
-  /// thread), so the event-driven /tf callback may run before that insertion --
-  /// the lookup would read a stale sample and skip that frame forever. The
-  /// callback first writes the message into the buffer through this method and
-  /// only then queries, removing the race (a duplicate insertion of the same
-  /// value after the Listener is idempotent).
-  void setTransform(const geometry_msgs::TransformStamped& transform) {
-    buffer.setTransform(transform, "ayanami_event_sync", /*is_static=*/false);
-  }
-
   /// @brief ROS TF tree health diagnostics (missing-edge troubleshooting):
-  /// whether edge (target<-source) is currently resolvable.
+  /// whether edge (target<-source) is currently resolvable (latest).
   bool canTransform(const std::string& target, const std::string& source,
                     double timeout = 0.0) const;
 
@@ -94,7 +61,6 @@ public:
 private:
   tf2_ros::Buffer buffer;
   std::unique_ptr<tf2_ros::TransformListener> listener;
-  std::vector<TfSyncEdge> tf_sync_edges;
 };
 
 }  // namespace ayanami_ros

@@ -10,6 +10,7 @@
 #include <std_msgs/String.h>
 
 #include <atomic>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -299,6 +300,12 @@ private:
                    const ayanami::nav_msgs::OccupancyGrid& map) {
               publishCostmap(name, map);
             });
+    cb_costmap_viz_update =
+        ayanami::interfaces::NavigationCallbacks::on_costmap_visualization_update.subscribe(
+            [this](const std::string& name,
+                   const ayanami::nav_msgs::OccupancyGridUpdate& update) {
+              publishCostmapUpdate(name, update);
+            });
     cb_navigation_result =
         ayanami::interfaces::NavigationCallbacks::on_navigation_result.subscribe(
             [this](const ayanami::actions::NavigationResult& result) {
@@ -321,6 +328,7 @@ private:
     cb_recovery_result.reset();
     cb_navigation_result.reset();
     cb_costmap_viz.reset();
+    cb_costmap_viz_update.reset();
   }
 
   void publishPlannerGoal(const ayanami::actions::GetPathGoal& goal) {
@@ -465,6 +473,65 @@ private:
     // costmap.local_frame); no map_frame/odom_frame fallback from config_ros
     // here (avoids dual-source divergence).
     nav_msgs::OccupancyGrid grid = toRosOccupancyGrid(map);
+    {
+      // Cache the full grid: subsequent core-side incremental updates
+      // (on_costmap_visualization_update) are merged into this copy.
+      std::lock_guard<std::mutex> lock(cached_grids_mutex);
+      cached_grids[name] = grid;
+    }
+    publishCostmapGrid(name, grid);
+  }
+
+  /// @brief Incremental costmap update (nav2 OccupancyGridUpdate semantics):
+  /// merge the window into the cached full grid and re-publish the merged
+  /// grid on the same latched topic. Updates arriving before any full grid
+  /// (no cache yet) are dropped -- the core always emits a full grid first.
+  void publishCostmapUpdate(
+      const std::string& name,
+      const ayanami::nav_msgs::OccupancyGridUpdate& update) {
+    nav_msgs::OccupancyGrid grid;
+    {
+      std::lock_guard<std::mutex> lock(cached_grids_mutex);
+      auto iter = cached_grids.find(name);
+      if (iter == cached_grids.end()) {
+        static std::atomic<bool> warned{false};
+        if (!warned.exchange(true)) {
+          spdlog::warn(
+              "rviz_viewer: costmap update for '{}' ignored (no full grid "
+              "cached yet)",
+              name);
+        }
+        return;
+      }
+      grid = iter->second;
+      const uint32_t grid_width = grid.info.width;
+      const uint32_t grid_height = grid.info.height;
+      if (update.x0 + update.width > grid_width ||
+          update.y0 + update.height > grid_height ||
+          grid.data.size() <
+              static_cast<size_t>(grid_width) * grid_height) {
+        spdlog::warn(
+            "rviz_viewer: costmap update for '{}' out of bounds "
+            "({},{} + {}x{} vs {}x{}); ignored",
+            name, update.x0, update.y0, update.width, update.height,
+            grid_width, grid_height);
+        return;
+      }
+      std::size_t in = 0;
+      for (uint32_t y = update.y0; y < update.y0 + update.height; ++y) {
+        for (uint32_t x = update.x0; x < update.x0 + update.width; ++x) {
+          grid.data[static_cast<size_t>(y) * grid_width + x] =
+              update.data[in];
+          ++in;
+        }
+      }
+      iter->second = grid;
+    }
+    publishCostmapGrid(name, grid);
+  }
+
+  void publishCostmapGrid(const std::string& name,
+                          const nav_msgs::OccupancyGrid& grid) {
     if (name == "local_costmap") {
       g_local_costmap_pub_count.fetch_add(1);
       local_costmap_pub.publish(grid);
@@ -499,11 +566,14 @@ private:
   std::string navigation_status_topic = "/ayanami/navigation_status";
   std::mutex last_recovery_mutex;
   std::string last_recovery_id;
-  ayanami::CallbackSubscription cb_costmap_viz, cb_get_path, cb_smooth_path,
-      cb_velocity_cmd, cb_get_path_goal, cb_get_path_feedback, cb_smooth_goal,
-      cb_smooth_feedback, cb_exe_goal, cb_exe_feedback, cb_exe_result,
-      cb_recovery_goal, cb_recovery_feedback, cb_recovery_result,
-      cb_navigation_result;
+  /// @brief Per-map cached full grids (incremental updates merge into these).
+  std::mutex cached_grids_mutex;
+  std::map<std::string, nav_msgs::OccupancyGrid> cached_grids;
+  ayanami::CallbackSubscription cb_costmap_viz, cb_costmap_viz_update,
+      cb_get_path, cb_smooth_path, cb_velocity_cmd, cb_get_path_goal,
+      cb_get_path_feedback, cb_smooth_goal, cb_smooth_feedback, cb_exe_goal,
+      cb_exe_feedback, cb_exe_result, cb_recovery_goal, cb_recovery_feedback,
+      cb_recovery_result, cb_navigation_result;
 };
 
 }  // namespace ayanami_ros

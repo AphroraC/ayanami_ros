@@ -74,16 +74,11 @@ add_library(cmd_chassis_publisher SHARED modules/cmd_chassis_publisher.cpp)
 target_link_libraries(cmd_chassis_publisher PRIVATE ayanami_ros ayanami::ayanami ${catkin_LIBRARIES})
 set_target_properties(cmd_chassis_publisher PROPERTIES PREFIX "libayanami_")
 
-# tf_sync_probe: TF sync stress-test probe extension (polls TransformStore/
 # fast_tf in-process, recording encoded-value change events; dynamically loaded
 # via extension_modules by scripts/tf_sync_stress_test.sh, not part of the
 # production extension_modules default list).
-add_library(tf_sync_probe SHARED modules/tf_sync_probe.cpp)
-target_link_libraries(tf_sync_probe PRIVATE ayanami_ros ayanami::ayanami)
-set_target_properties(tf_sync_probe PROPERTIES PREFIX "libayanami_")
 
 install(TARGETS ayanami_ros ayanami_rosnode rviz_viewer cmd_chassis_publisher
-  tf_sync_probe
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY include/ DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})

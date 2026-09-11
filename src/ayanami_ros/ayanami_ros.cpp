@@ -7,144 +7,16 @@
 #include <ros/package.h>
 #include <tf2_eigen/tf2_eigen.h>
 
-#include <ayanami/interfaces/transform_store.hpp>
 #include <ayanami/utility/load_module.hpp>
 #include <ayanami/utility/logging.hpp>
-#include <ayanami/abstract/components/robot_state_controller.hpp>
 
 #include <ayanami_ros/ros_msg_converter.hpp>
 
 #include <spdlog/spdlog.h>
 
 namespace ayanami_ros {
+
 namespace {
-
-// tf_sync_edges / tf_static_edges entry format (config_ros.json):
-//   "<target>-<source>[:<rate>hz]"   e.g. "map-odom:50hz", "base_link-laser"
-// The rate suffix is optional; a missing suffix falls back to the global
-// tf_sync_rate. For tf_static_edges the suffix is accepted but ignored
-// (static transforms are re-asserted; their value never changes). The legacy
-// [[target, source]] array format is still accepted (deprecated; every edge
-// gets the default rate).
-TfSyncEdge parseTfEdge(const std::string& entry, double default_rate,
-                       std::pair<std::string, std::string>& pair_out) {
-  TfSyncEdge edge;
-  // Rate suffix: everything after the last ':' (frame names never contain ':').
-  double rate = default_rate;
-  std::string pair_part = entry;
-  const auto colon = entry.rfind(':');
-  if (colon != std::string::npos) {
-    pair_part = entry.substr(0, colon);
-    std::string rate_part = entry.substr(colon + 1);
-    for (auto& ch : rate_part) {
-      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    if (rate_part.size() >= 2 &&
-        rate_part.compare(rate_part.size() - 2, 2, "hz") == 0) {
-      rate_part.erase(rate_part.size() - 2);
-    }
-    try {
-      rate = std::stod(rate_part);
-    } catch (const std::exception&) {
-      rate = -1.0;
-    }
-    if (!(rate > 0.0)) {
-      spdlog::warn("tf edge '{}' has an invalid rate suffix; using the "
-                   "default {}hz",
-                   entry, default_rate);
-      rate = default_rate;
-    }
-  }
-  // Edge: split at the LAST '-' (the source/child frame name must not
-  // contain '-', see the TfSyncEdge doc).
-  const auto dash = pair_part.rfind('-');
-  if (dash == std::string::npos || dash == 0 || dash + 1 >= pair_part.size()) {
-    spdlog::warn("tf edge '{}' is not '<target>-<source>', skipped", entry);
-    edge.rate_hz = -1.0;  // invalid-entry marker
-    pair_out = {entry, {}};
-    return edge;
-  }
-  edge.target = pair_part.substr(0, dash);
-  edge.source = pair_part.substr(dash + 1);
-  edge.rate_hz = rate;
-  pair_out = {edge.target, edge.source};
-  return edge;
-}
-
-std::vector<TfSyncEdge> readTfSyncEdges(const std::string& config_ros_path) {
-  ayanami::Config config_ros(config_ros_path);
-  const std::string kSec = "ayanami_ros";
-  const std::string map_frame = config_ros.param<std::string>(kSec, "map_frame", "map");
-  const std::string odom_frame = config_ros.param<std::string>(kSec, "odom_frame", "odom");
-  const std::string robot_frame = config_ros.param<std::string>(kSec, "robot_frame", "base_footprint");
-  const double default_rate =
-      config_ros.param<double>(kSec, "tf_sync_rate", 50.0);
-
-  std::vector<TfSyncEdge> edges;
-  // New format: a plain vector<string> of "target-source[:rate]hz" entries.
-  std::vector<std::string> raw;
-  try {
-    raw = config_ros.param<std::vector<std::string>>(kSec, "tf_sync_edges", {});
-  } catch (const std::exception&) {
-    // Legacy format (deprecated): [[target, source], ...].
-    for (const auto& edge : config_ros.param<std::vector<std::vector<std::string>>>(
-             kSec, "tf_sync_edges", {})) {
-      if (edge.size() == 2) {
-        raw.push_back(edge[0] + "-" + edge[1]);
-      }
-    }
-    if (!raw.empty()) {
-      spdlog::warn("tf_sync_edges uses the deprecated [[target, source]] "
-                   "array format; migrate to \"target-source:ratehz\" strings");
-    }
-  }
-  for (const auto& entry : raw) {
-    std::pair<std::string, std::string> pair_out;
-    const TfSyncEdge edge = parseTfEdge(entry, default_rate, pair_out);
-    if (edge.rate_hz > 0.0) {
-      edges.push_back(edge);
-    }
-  }
-  if (edges.empty()) {
-    // Default: map-odom, odom-base_link, map-base_link (all default rate).
-    const std::pair<std::string, std::string> defaults[] = {
-        {map_frame, odom_frame}, {odom_frame, robot_frame},
-        {map_frame, robot_frame}};
-    for (const auto& [t, src] : defaults) {
-      edges.push_back({t, src, default_rate});
-    }
-  }
-  return edges;
-}
-
-std::set<std::pair<std::string, std::string>> readTfStaticEdges(
-    const std::string& config_ros_path) {
-  ayanami::Config config_ros(config_ros_path);
-  const double default_rate =
-      config_ros.param<double>("ayanami_ros", "tf_sync_rate", 50.0);
-  std::set<std::pair<std::string, std::string>> edges;
-  std::vector<std::string> raw;
-  try {
-    raw = config_ros.param<std::vector<std::string>>("ayanami_ros",
-                                                     "tf_static_edges", {});
-  } catch (const std::exception&) {
-    for (const auto& edge : config_ros.param<std::vector<std::vector<std::string>>>(
-             "ayanami_ros", "tf_static_edges", {})) {
-      if (edge.size() == 2) {
-        raw.push_back(edge[0] + "-" + edge[1]);
-      }
-    }
-  }
-  for (const auto& entry : raw) {
-    std::pair<std::string, std::string> pair_out;
-    // Static edge: the rate suffix is accepted but ignored (format check only).
-    parseTfEdge(entry, default_rate, pair_out);
-    if (!pair_out.second.empty()) {
-      edges.insert(pair_out);
-    }
-  }
-  return edges;
-}
 
 // Resolves config_path (used in the member init list, lazily evaluated):
 // param -> env -> package.
@@ -163,8 +35,7 @@ std::string resolveConfigPath(const ros::NodeHandle& nh) {
 AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
 : nh(nh),
   config_path(resolveConfigPath(nh)),
-  tf_listener(nh, readTfSyncEdges(config_path + "/config_ros.json")),
-  configured_static_edges(readTfStaticEdges(config_path + "/config_ros.json")),
+  tf_listener(nh),
   navigation_so_name("libayanami_costmap_navigation.so") {
   // verbatim ordering.
   // Note: in the default values, ros::package::getPath is only evaluated when
@@ -184,19 +55,6 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   // navigation.robot_frame). Keeping the two defaults equal means "neither
   // config sets it" resolves to one frame, not a silent mismatch.
   robot_frame = config_ros.param<std::string>("ayanami_ros", "robot_frame", "base_link");
-  tf_sync_rate = config_ros.param<double>("ayanami_ros", "tf_sync_rate", 50.0);
- // tf_cache_duration: TransformStore dynamic-edge lookback window by stamp
- // (seconds, default 10s aligned with tf2 DEFAULT_MAX_STORAGE_TIME). Must be
- // configured before any TF write (this constructor runs before
- // loadNavigationModule/start, so this is the only valid configuration point).
-  const double tf_cache_duration =
-      config_ros.param<double>("ayanami_ros", "tf_cache_duration", 10.0);
-  ayanami::interfaces::TransformStore::instance().configureCacheDuration(
-      tf_cache_duration);
-  localization_clear_yaw_threshold = config_ros.param<double>(
-      "ayanami_ros", "localization_clear_yaw_threshold", 1.0);
-  localization_clear_pos_threshold = config_ros.param<double>(
-      "ayanami_ros", "localization_clear_pos_threshold", 2.0);
   navigation_so_name = config_ros.param<std::string>("ayanami_ros", "navigation_so_name", navigation_so_name);
 
   // robot_frame has one owner (config_navigation.json::navigation.robot_frame);
@@ -206,6 +64,10 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   // lives here, in the ROS boundary, because it is a ROS-config consistency
   // rule -- the pure-C++ core has no business reading config_ros.json.
   verifyRobotFrameMatchesNavigation();
+
+  // TF bridge: core TF queries are answered on demand from the ROS tf2
+  // buffer (interpolation, static edges, stamp-time lookups included).
+  installTfSource();
 
   // Order-critical: extensions must register their NavigationCallbacks
   // subscriptions before navigation_module->start, otherwise the first wave of
@@ -238,11 +100,6 @@ void AyanamiROS::stop() {
   if (loop_thread.joinable()) {
     loop_thread.join();
   }
-  tf_queue.disable();
-  if (tf_queue_thread.joinable()) {
-    tf_queue_thread.join();
-  }
-  tf_queue.clear();
   if (navigation_module) {
     navigation_module->stop();
   }
@@ -251,9 +108,9 @@ void AyanamiROS::stop() {
 void AyanamiROS::verifyRobotFrameMatchesNavigation() {
   // The core owns robot_frame (config_navigation.json::navigation.robot_frame);
   // config_ros only mirrors it for the ROS-side TF producers. A mismatch means
-  // TF edges and costmap geometry would be built around different robot frames
-  // -- a failure that surfaces much later as an unexplainable TF gap, so it is
-  // checked here, on the ROS boundary, and refused at startup.
+  // TF edges and costmap geometry would be built around different robot
+  // frames -- a failure that surfaces much later as an unexplainable TF gap, so
+  // it is checked here, on the ROS boundary, and refused at startup.
   //
   // This used to be an assert inside the core's CostmapNavigationServer. That
   // was wrong twice over: the pure-C++ core has no business opening
@@ -273,6 +130,22 @@ void AyanamiROS::verifyRobotFrameMatchesNavigation() {
         "'. The navigation config owns the robot frame; config_ros must mirror "
         "it (or omit the key to inherit the default).");
   }
+}
+
+void AyanamiROS::installTfSource() {
+  // The bridge: core threads call RobotStateController::lookupTransform and
+  // land here, on the tf2 buffer. The timeout is a steady-clock poll inside
+  // TF2Listener (never tf2's ros::Time-clocked wait -- that stalls when
+  // /clock stops advancing). Thread safety: tf2 buffers are internally
+  // synchronized, so any core thread may query concurrently.
+  ayanami::components::RobotStateController::instance().setTransformSource(
+      [this](const std::string& target, const std::string& source,
+             const ayanami::Timestamp& stamp, Eigen::Isometry3d& transform,
+             double timeout) {
+        return tf_listener.lookupTransform(target, source,
+                                           detail::toRosTime(stamp),
+                                           transform, timeout);
+      });
 }
 
 namespace {
@@ -364,23 +237,6 @@ void AyanamiROS::subscribeTopics() {
     goal_sub = nh.subscribe(goal_topic, 1, &AyanamiROS::goalCallback, this);
     spdlog::info("subscribe navigation goal topic={}", goal_topic);
   }
-
-  // Event-driven TF sync: every /tf message immediately triggers a full-edge
-  // sync (dedicated callback queue + thread, bypassing the loop's
-  // ros::spinOnce -- otherwise the callback rate is clamped by the 50Hz
-  // polling ceiling).
-  // The 50Hz loop sync is kept as a fallback (covers /tf_static edges and
-  // extreme message-loss scenarios).
-  tf_nh = ros::NodeHandle();
-  tf_nh.setCallbackQueue(&tf_queue);
-  tf_sub = tf_nh.subscribe("/tf", 200, &AyanamiROS::tfCallback, this,
-                             ros::TransportHints().tcpNoDelay());
-  tf_queue_thread = std::thread([this] {
-    while (ros::ok() && !kill_switch.load()) {
-      tf_queue.callAvailable(ros::WallDuration(0.0005));
-    }
-  });
-  spdlog::info("subscribe /tf for event-driven transform sync");
 }
 
 void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
@@ -421,50 +277,14 @@ bool AyanamiROS::hasPendingGoal() const {
   return pending_goal.has_value();
 }
 
-void AyanamiROS::setTransform(const std::string& parent,
-                              const std::string& child,
-                              ayanami::Timestamp stamp,
-                              const Eigen::Isometry3d& transform,
-                              bool is_static) {
-  ayanami::components::RobotStateController::instance().setTransform(
-      parent, child, std::move(stamp), transform, is_static);
-}
-
 void AyanamiROS::setOdometry(const ayanami::geometry_msgs::TwistStamped& twist) {
   // Writes directly into the core RobotStateController (core controller
-  // execution reads the latest velocity; pose is still queried via TF on the
-  // core side).
+  // execution reads the latest velocity; pose is queried via the injected
+  // tf2 source).
   ayanami::components::RobotStateController::instance().setOdometry(twist);
 }
 
-void AyanamiROS::tfCallback(const tf2_msgs::TFMessage::ConstPtr& msg) {
-  if (kill_switch.load()) {
-    return;
-  }
-  // First inject the messages into the buffer synchronously (removing the
-  // race with TransformListener's asynchronous insertion: otherwise this
-  // callback might run before the insertion, read a stale sample, and skip the
-  // frame forever), then trigger the sync.
-  // syncTransformsToCore serializes internally with sync_mutex; no lock is
-  // needed here.
-  for (const auto& transform : msg->transforms) {
-    tf_listener.setTransform(transform);
-  }
-  syncTransformsToCore(ros::Time(0), 0.0);
-}
-
 void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
- // Populate the core TF buffer before delivering: prefer syncing at the
- // sensor's header.stamp (the ROS TF buffer's own cache can interpolate the
- // edge transforms at the sensor time and write exact samples, so the core's
- // stamp-based obstacle lookups can hit); on failures such as a stamp ahead of
- // the ROS buffer's newest sample, fall back to latest. timeout=0: the callback
- // thread is never blocked.
-  const ros::Time sensor_stamp = detail::toRosTime(cloud.header.stamp);
-  if (!sensor_stamp.isZero()) {
-    syncTransformsToCore(sensor_stamp, 0.0);
-  }
-  syncTransformsToCore(ros::Time(0), 0.0);
   if (!navigation_module) {
     return;
   }
@@ -474,11 +294,6 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::PointCloud2& cloud) {
 }
 
 void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
-  const ros::Time sensor_stamp = detail::toRosTime(scan.header.stamp);
-  if (!sensor_stamp.isZero()) {
-    syncTransformsToCore(sensor_stamp, 0.0);
-  }
-  syncTransformsToCore(ros::Time(0), 0.0);
   if (!navigation_module) {
     return;
   }
@@ -487,8 +302,8 @@ void AyanamiROS::submitSensor(const ayanami::sensor_msgs::LaserScan& scan) {
 
 void AyanamiROS::pointcloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg) {
   // Conversion goes uniformly through ros_msg_converter; the callback only
-  // converts, and the core boundary is submitSensor (TF pre-sync + direct
-  // delivery to the host).
+  // converts, and the core boundary is submitSensor (direct delivery to the
+  // host).
   if (!msg) {
     return;
   }
@@ -513,167 +328,19 @@ void AyanamiROS::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
   setOdometry(fromRosTwist(ros_twist));
 }
 
-void AyanamiROS::syncTransformsToCore() {
-  // + (time semantics): real TF2Listener wired in.
-  // For each edge in tf_sync_edges: lookupTransform(target, source,
-  // ros::Time(0)) -> TransformStamped -> Eigen::Isometry3d ->
-  // TransformStore::setTransform.
-  // The stamp is the real TransformStamped.header.stamp returned by the TF2
-  // buffer (sensor/TF publication time), no longer faked with ros::Time::now;
-  // the lookup uses Time(0), i.e. latest.
-  // timeout must be 0: tf2_ros's wait-with-timeout is clocked by ros::Time::now
-  // (sim time); when /clock stalls (llvmpipe/physics hiccups) it would block
-  // the 50Hz sync loop forever -- once the loop blocks, scan rasterization /
-  // rolling window / goal dispatch all freeze (one measured root cause of
-  // hangs). Missing edges are covered by checkTfHealth + the sync missing-edge
-  // diagnostics; the next cycle simply retries.
-  syncTransformsToCore(ros::Time(0), 0.0);
-}
-
-void AyanamiROS::syncTransformsToCore(const ros::Time& stamp, double timeout) {
-  // tf thread / loop thread / sensor callbacks may enter concurrently;
-  // serialization protects the tf_edge_* intermediate state and the downstream
-  // writer's ordering assumptions.
-  std::lock_guard<std::mutex> sync_lock(sync_mutex);
-  const auto now = std::chrono::steady_clock::now();
-  const auto& edges = tf_listener.tfSyncEdges();
-  // Per-edge sync-rate gating (tf_sync_edges "<target>-<source>:<rate>hz"):
-  // an edge is sampled at most at its configured rate, no matter whether this
-  // pass was driven by the loop, the event-driven /tf callback or a
-  // sensor-callback TF pre-sync. Fresh /tf data lands within one configured
-  // period at worst.
-  if (edge_last_sync.size() != edges.size()) {
-    edge_last_sync.assign(edges.size(), std::chrono::steady_clock::time_point{});
-  }
-  for (std::size_t edge_index = 0; edge_index < edges.size(); ++edge_index) {
-    const auto& edge = edges[edge_index];
-    const auto period = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::duration<double>(1.0 / std::max(edge.rate_hz, 1e-6)));
-    if (now - edge_last_sync[edge_index] < period) {
-      continue;
-    }
-    edge_last_sync[edge_index] = now;
-    const std::string& target = edge.target;
-    const std::string& source = edge.source;
-    geometry_msgs::TransformStamped tf_msg;
-    if (tf_listener.lookupTransform(target, source, stamp, tf_msg, timeout)) {
-      {
-        std::lock_guard<std::mutex> lock(tf_edge_mutex);
-        tf_missing_since.erase(std::make_pair(target, source));
-      }
-      // TF2 returns stamp=0 for a static edge queried as latest, but echoes a
-      // concrete query time for the same static edge. fast_tf forbids changing
-      // a link between static and dynamic, so classify each configured edge
-      // once and keep that type for its process lifetime.
-      bool is_static = false;
-      {
-        std::lock_guard<std::mutex> lock(tf_edge_mutex);
-        const auto key = std::make_pair(target, source);
-        const bool configured_static = configured_static_edges.count(key) != 0;
-        const auto inserted = tf_edge_static.emplace(key, configured_static);
-        is_static = inserted.first->second;
-      }
-      auto core_stamp = detail::fromRosTime(tf_msg.header.stamp);
- // Future-stamp clamping: the localization layer writes the map->odom stamp
- // into the future by transform_tolerance (measured AMCL tolerance=0.5 ->
- // +0.5s). Once TransformStore's 500ms stamp window is occupied by future
- // samples, sensor-stamp queries land before the window and all fail. Clamp to
- // the current clock so the stamp sequence stays close to real time.
-      {
-        const auto now_stamp = detail::fromRosTime(ros::Time::now());
-        if (core_stamp.count() > now_stamp.count()) {
-          core_stamp = now_stamp;
-        }
-      }
- // Note: the old tf_time_offset stamp-shift patch was retired along with
- // fast_tf's configurable lookback window (tf_cache_duration); dynamic edges
- // now write the real header.stamp.
-      const Eigen::Isometry3d edge_tf = tf2::transformToEigen(tf_msg);
-      setTransform(target, source, core_stamp, edge_tf, is_static);
-      // Global dynamic map rebuild trigger (only the odom<-base_footprint
-      // dynamic edge): accumulate robot rotation/translation and clear the
-      // global dynamic layer once the threshold is exceeded (see the hpp
-      // comment).
-      if (!is_static && target == odom_frame && source == robot_frame) {
-        std::lock_guard<std::mutex> jump_lock(localization_jump_mutex);
-        const Eigen::Vector3d delta =
-            edge_tf.translation() - localization_jump_prev.translation();
-        const double dyaw_raw =
-            Eigen::Rotation2Dd(edge_tf.linear().topLeftCorner<2, 2>())
-                .angle() -
-            Eigen::Rotation2Dd(
-                localization_jump_prev.linear().topLeftCorner<2, 2>())
-                .angle();
-        const double dyaw = std::atan2(std::sin(dyaw_raw), std::cos(dyaw_raw));
-        if (localization_jump_prev_valid) {
-          localization_accum_yaw += std::abs(dyaw);
-          localization_accum_pos += delta.norm();
-        }
-        localization_jump_prev = edge_tf;
-        localization_jump_prev_valid = true;
-        if (localization_jump_prev_valid &&
-            (localization_accum_yaw > localization_clear_yaw_threshold ||
-             localization_accum_pos > localization_clear_pos_threshold)) {
-          if (navigation_module) {
-            spdlog::info(
-                "accumulated motion since last clear (dyaw={:.3f} rad, "
-                "dpos={:.3f} m); clearing global dynamic costmap",
-                localization_accum_yaw, localization_accum_pos);
-            navigation_module->onLocalizationJump();
-          }
-          localization_accum_yaw = 0.0;
-          localization_accum_pos = 0.0;
-        }
-      }
-    } else {
-      // Persistent missing-edge diagnostics (emitted only by the loop's
-      // low-frequency path; sensor callbacks use timeout=0, a quick liveness
-      // probe that never blocks here). When an edge has been unavailable for
-      // >=2s continuously and >=5s have passed since the last diagnostic, log
-      // once with the most common environmental root causes (multiple
-      // simulation instances concurrently publishing the same TF names /
-      // missing publisher).
-      const auto key = std::make_pair(target, source);
-      bool need_diag = false;
-      {
-        std::lock_guard<std::mutex> lock(tf_edge_mutex);
-        const auto first = tf_missing_since.emplace(key, now);
-        const auto diag_at = tf_diag_logged_at.find(key);
-        if (!first.second) {
-          need_diag =
-              now - first.first->second > std::chrono::seconds(2) &&
-              (diag_at == tf_diag_logged_at.end() ||
-               now - diag_at->second > std::chrono::seconds(5));
-        }
-        if (need_diag) {
-          tf_diag_logged_at[key] = now;
-        }
-      }
-      if (need_diag) {
-        spdlog::warn(
-            "TF sync missing edge {} <- {} for over 2s: obstacle stamping "
-            "and the robot pose will misbehave. Check the gazebo diff-drive "
-            "(odom->base_footprint), AMCL (map->odom) and "
-            "robot_state_publisher; if roslaunch ran several times, leftover "
-            "simulation instances may publish duplicate TF frames",
-            target, source);
-      }
-    }
-  }
-}
-
 void AyanamiROS::checkTfHealth() {
-  // Low-frequency health diagnostics: whether each sync edge is resolvable on
-  // the ROS TF side; while persistently missing, log every 5s (with the full
-  // frame tree), and log one info after recovery. Used to tell "frames missing
-  // from the ROS-side TF tree" apart from "core-side lookup failures" -- on a
-  // missing edge the frame tree is printed directly, showing at a glance which
-  // producer is absent or fighting leftover instances.
-  const auto now = std::chrono::steady_clock::now();
+  // Low-frequency health diagnostics: whether the frame-chain edges are
+  // resolvable on the ROS tf2 side; while persistently missing, log every 5s
+  // with the full frame tree, and log one info after recovery. Used to tell
+  // "frames missing from the ROS-side TF tree" apart from "core-side query
+  // failures" -- on a missing edge the frame tree is printed directly,
+  // showing at a glance which producer is absent or fighting leftover
+  // instances.
+  const std::pair<std::string, std::string> edges[] = {
+      {map_frame, odom_frame}, {odom_frame, robot_frame},
+      {map_frame, robot_frame}};
   std::string missing_edges;
-  for (const auto& edge : tf_listener.tfSyncEdges()) {
-    const std::string& target = edge.target;
-    const std::string& source = edge.source;
+  for (const auto& [target, source] : edges) {
     if (!tf_listener.canTransform(target, source, 0.0)) {
       if (!missing_edges.empty()) missing_edges += ", ";
       missing_edges += target + "<-" + source;
@@ -681,12 +348,13 @@ void AyanamiROS::checkTfHealth() {
   }
   if (missing_edges.empty()) {
     if (tf_health_was_bad) {
-      spdlog::info("TF health check: all {} synced edges are available again",
-                   tf_listener.tfSyncEdges().size());
+      spdlog::info("TF health check: all {} configured edges are available again",
+                   3);
       tf_health_was_bad = false;
     }
     return;
   }
+  const auto now = std::chrono::steady_clock::now();
   const bool due = (now - tf_health_last_log) > std::chrono::seconds(5);
   if (due) {
     tf_health_last_log = now;
@@ -703,12 +371,10 @@ void AyanamiROS::checkTfHealth() {
 }
 
 void AyanamiROS::loop() {
-  const double rate_hz = tf_sync_rate > 0.0 ? tf_sync_rate : 50.0;
-  ros::WallRate rate(rate_hz);
-  spdlog::info("AyanamiROS loop started rate={:.1f}Hz", rate_hz);
+  ros::WallRate rate(50.0);
+  spdlog::info("AyanamiROS loop started rate=50.0Hz");
   auto last_tf_health = std::chrono::steady_clock::time_point{};
   while (ros::ok() && !kill_switch.load()) {
-    syncTransformsToCore();
     if (std::chrono::steady_clock::now() - last_tf_health >
         std::chrono::seconds(1)) {
       checkTfHealth();

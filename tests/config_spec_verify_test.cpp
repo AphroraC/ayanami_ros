@@ -125,8 +125,6 @@ TEST(ConfigSpecVerify, configRosIsInputBoundaryOnly) {
   EXPECT_EQ(cfg.param<std::string>(sec, "odom_frame", ""), "odom");
   EXPECT_EQ(cfg.param<std::string>(sec, "robot_frame", ""),
             "base_link");
-  EXPECT_DOUBLE_EQ(cfg.param<double>(sec, "tf_sync_rate", 0.0), 50.0);
-
   EXPECT_EQ(cfg.param<std::string>(sec, "navigation_so_name", ""),
             "libayanami_costmap_navigation.so");
   // Generic factory: navigation_create_symbol no longer exists.
@@ -202,65 +200,26 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
   EXPECT_DOUBLE_EQ(cfg.param<double>(chassis, "power_limit", -1.0), 100.0);
 }
 
-TEST(ConfigSpecVerify, tfSyncEdgesUseStringFormat) {
-  // New format: "target-source[:rate]hz" per entry; the rate suffix is
-  // optional (falls back to tf_sync_rate) and required syntax is strict:
-  // non-empty frames, no empty rate.
+TEST(ConfigSpecVerify, configRosCarriesNoTfSamplingConfig) {
+  // TF moved to an on-demand bridge (the core queries the injected tf2
+  // source directly): the periodic-sampling configuration keys are gone.
   initConfig();
   ayanami::Config cfg(
       ayanami::GlobalConfig::getConfigPath("config_ros"));
-  const auto entries = cfg.param<std::vector<std::string>>(
-      "ayanami_ros", "tf_sync_edges", {});
-  ASSERT_FALSE(entries.empty()) << "tf_sync_edges cannot be empty";
-  for (const auto& entry : entries) {
-    const auto dash = entry.rfind('-');
-    ASSERT_NE(dash, std::string::npos) << entry;
-    ASSERT_GT(dash, 0u) << entry;
-    ASSERT_LT(dash + 1, entry.size()) << entry;
-    const auto colon = entry.rfind(':');
-    if (colon != std::string::npos) {
-      ASSERT_GT(colon, dash) << entry;
-      std::string rate = entry.substr(colon + 1);
-      for (auto& ch : rate) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-      }
-      if (rate.size() >= 2 && rate.compare(rate.size() - 2, 2, "hz") == 0) {
-        rate.erase(rate.size() - 2);
-      }
-      ASSERT_FALSE(rate.empty()) << entry;
-      EXPECT_EQ(rate.find_first_not_of("0123456789."), std::string::npos)
-          << "invalid rate in " << entry;
-    }
-  }
+  EXPECT_FALSE(cfg.hasParam("ayanami_ros", "tf_sync_edges"));
+  EXPECT_FALSE(cfg.hasParam("ayanami_ros", "tf_static_edges"));
+  EXPECT_FALSE(cfg.hasParam("ayanami_ros", "tf_sync_rate"));
+  EXPECT_FALSE(cfg.hasParam("ayanami_ros", "tf_cache_duration"));
+  EXPECT_EQ(ayanami::GlobalConfig::getConfigPath("config_ros"),
+            std::string(AYANAMI_TEST_CONFIG_DIR) + "/config_ros.json");
 }
 
-TEST(ConfigSpecVerify, tfStaticEdgesAreSyncEdgePairs) {
-  // Every tf_static_edges entry must denote the same (target, source) pair as
-  // some tf_sync_edges entry, independent of the optional rate suffix.
-  initConfig();
-  ayanami::Config cfg(
-      ayanami::GlobalConfig::getConfigPath("config_ros"));
-  auto split = [](const std::string& entry) {
-    std::string pair_part = entry;
-    const auto colon = entry.rfind(':');
-    if (colon != std::string::npos) {
-      pair_part = entry.substr(0, colon);
-    }
-    const auto dash = pair_part.rfind('-');
-    return std::make_pair(pair_part.substr(0, dash), pair_part.substr(dash + 1));
-  };
-  std::vector<std::pair<std::string, std::string>> sync;
-  for (const auto& entry : cfg.param<std::vector<std::string>>(
-           "ayanami_ros", "tf_sync_edges", {})) {
-    sync.push_back(split(entry));
-  }
-  const auto statics = cfg.param<std::vector<std::string>>(
-      "ayanami_ros", "tf_static_edges", {});
-  for (const auto& entry : statics) {
-    const auto pair = split(entry);
-    EXPECT_NE(std::find(sync.begin(), sync.end(), pair), sync.end())
-        << "static edge " << entry << " has no matching sync edge";
-  }
+nlohmann::json read_module_json(const std::string& rel) {
+  std::filesystem::path path =
+      std::filesystem::path(AYANAMI_TEST_CONFIG_DIR) / rel;
+  std::ifstream ifs(path);
+  EXPECT_TRUE(ifs.good()) << "cannot open " << path;
+  return nlohmann::json::parse(ifs, nullptr, false);
 }
 
 TEST(ConfigSpecVerify, costmapGazeboAlignment) {
@@ -274,42 +233,75 @@ TEST(ConfigSpecVerify, costmapGazeboAlignment) {
   EXPECT_FALSE(cfg.hasParam("costmap_global", "size_x"));
   EXPECT_FALSE(cfg.hasParam("costmap_global", "size_y"));
 
-  // nav_demo/param alignment: robot_radius=0.12 (circular body, inscribed
-  // fallback 0.12); global inflation 0.5/csf 10.0; local inflation 0.2/csf 3.0.
+  // robot_radius=0.12 is the SINGLE body-size source: the per-map
+  // inscribed_radius keys are gone (the footprint derives from the radius).
   EXPECT_DOUBLE_EQ(cfg.param<double>("costmap", "robot_radius", -1.0), 0.12);
-  EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_global", "inscribed_radius", -1.0), 0.12);
-  EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "inscribed_radius", -1.0), 0.12);
-  EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_global", "inflation_radius", 0.0), 0.5);
-  EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_global", "cost_scaling_factor", 0.0), 10.0);
-  EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "inflation_radius", 0.0), 0.2);
-  EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "cost_scaling_factor", 0.0), 3.0);
+  EXPECT_FALSE(cfg.hasParam("costmap_global", "inscribed_radius"));
+  EXPECT_FALSE(cfg.hasParam("costmap_local", "inscribed_radius"));
 
-  // obstacle/raytrace ranges for the narrow small-vehicle scenario (nav_demo
-  // common parameters).
+  // Layer composition comes from the layer plugin jsons (modules/ so+json).
+  // NOTE: hold the parsed doc in a named variable -- binding a reference
+  // into a temporary would dangle (lifetime extension does not chain).
+  const auto nav_doc = read_navigation_json();
+  const auto& global_layers = nav_doc.at("costmap_global").at("layers");
+  ASSERT_EQ(global_layers.size(), 3u);
+  EXPECT_EQ(global_layers[0].get<std::string>(),
+            "modules/costmap_static_layer.json");
+  EXPECT_EQ(global_layers[1].get<std::string>(),
+            "modules/costmap_obstacle_layer_global.json");
+  EXPECT_EQ(global_layers[2].get<std::string>(),
+            "modules/costmap_inflation_layer_global.json");
+  const auto& local_layers = nav_doc.at("costmap_local").at("layers");
+  ASSERT_EQ(local_layers.size(), 2u);
+
+  // Inflation policy lives in the inflation layer jsons (nav_demo alignment:
+  // global 0.5/csf 10.0; local 0.2/csf 3.0).
+  const auto global_inflation =
+      read_module_json("modules/costmap_inflation_layer_global.json");
   EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "obstacle_range", -1.0), 3.0);
+      global_inflation.at("inflation_layer").at("inflation_radius").get<double>(),
+      0.5);
   EXPECT_DOUBLE_EQ(
-      cfg.param<double>("costmap_local", "raytrace_range", -1.0), 3.5);
+      global_inflation.at("inflation_layer").at("cost_scaling_factor").get<double>(),
+      10.0);
+  const auto local_inflation =
+      read_module_json("modules/costmap_inflation_layer.json");
+  EXPECT_DOUBLE_EQ(
+      local_inflation.at("inflation_layer").at("inflation_radius").get<double>(),
+      0.2);
+  EXPECT_DOUBLE_EQ(
+      local_inflation.at("inflation_layer").at("cost_scaling_factor").get<double>(),
+      3.0);
+
+  // Observation filtering lives in the obstacle layer jsons (nav_demo
+  // narrow small-vehicle scenario ranges).
+  const auto global_obstacle =
+      read_module_json("modules/costmap_obstacle_layer_global.json");
+  EXPECT_DOUBLE_EQ(
+      global_obstacle.at("obstacle_layer").at("clear_margin").get<double>(),
+      0.5);
+  const auto local_obstacle =
+      read_module_json("modules/costmap_obstacle_layer.json");
+  EXPECT_DOUBLE_EQ(
+      local_obstacle.at("obstacle_layer").at("scan").at("obstacle_max_range").get<double>(),
+      3.0);
+  EXPECT_DOUBLE_EQ(
+      local_obstacle.at("obstacle_layer").at("scan").at("raytrace_max_range").get<double>(),
+      3.5);
 }
 
 TEST(ConfigSpecVerify, costmapObservationSourcesUseScan) {
-  initConfig();
-  const auto doc = read_navigation_json();
-  const auto& sources = doc.at("costmap_local").at("observation_sources");
+  // The observation_sources declaration moved INTO the consuming obstacle
+  // layer json (filtering parameters are layer-owned).
+  const auto doc = read_module_json("modules/costmap_obstacle_layer.json");
+  const auto& sources = doc.at("obstacle_layer").at("observation_sources");
   ASSERT_TRUE(sources.is_array());
   bool found = false;
   for (const auto& s : sources) {
     if (!s.is_string()) {
       continue;
     }
-    const auto v = s.get<std::string>();
-    if (v == "scan" || v.find("LaserScan") != std::string::npos) {
+    if (s.get<std::string>() == "scan") {
       found = true;
     }
   }
@@ -382,7 +374,7 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullModuleNames) {
   };
 
   EXPECT_EQ(component_name("config_planner", "planner"),
-            "costmap_smac_planner");
+            "costmap_astar_planner");
   EXPECT_EQ(component_name("config_smoother", "smoother"),
             "costmap_savitzky_smoother");
   EXPECT_EQ(component_name("config_controller", "controller"),
@@ -396,10 +388,10 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullModuleNames) {
 
 TEST(ConfigSpecVerify, staticMapLoadsAndNavDemoCompat) {
   initConfig();
-  ayanami::Config cfg(
-      ayanami::GlobalConfig::getConfigPath("config_navigation"));
+  const auto static_layer =
+      read_module_json("modules/costmap_static_layer.json");
   const std::string static_map =
-      cfg.param<std::string>("costmap_global", "static_map", "");
+      static_layer.at("static_layer").at("static_map").get<std::string>();
   ASSERT_FALSE(static_map.empty());
 
   // M1 assets route (box_house compatible): static_map points to

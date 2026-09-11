@@ -25,8 +25,7 @@ namespace {
 
 TEST(TF2Listener, lookupTransformEmptyReturnsFalse) {
   ros::NodeHandle nh("~");
-  ayanami_ros::TF2Listener listener(
-      nh, {{"map", "odom"}, {"odom", "base_link"}, {"map", "base_link"}});
+  ayanami_ros::TF2Listener listener(nh);
 
   Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
   // No roscore: the buffer stays empty; lookupTransform(..., Duration(0))
@@ -44,7 +43,7 @@ TEST(TF2Listener, lookupStaticBroadcastTransform) {
   }
 
   ros::NodeHandle nh("~");
-  ayanami_ros::TF2Listener listener(nh, {{"map", "odom"}});
+  ayanami_ros::TF2Listener listener(nh);
 
   // Dynamic /tf broadcast (a real TF in the odom sense): header.stamp marks
   // the frame's time.
