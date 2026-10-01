@@ -77,9 +77,7 @@ std::filesystem::path makeConfigDir() {
             "  \"rviz_viewer\": {\n"
             "    \"planner_path_topic\": \"/test/rviz/planner/path\",\n"
             "    \"smoother_path_topic\": \"/test/rviz/smoother/path\",\n"
-            "    \"cmd_vel_topic\": \"/test/rviz/cmd_vel\",\n"
-            "    \"global_costmap_topic\": \"/test/rviz/global_costmap\",\n"
-            "    \"local_costmap_topic\": \"/test/rviz/local_costmap\"\n"
+            "    \"cmd_vel_topic\": \"/test/rviz/cmd_vel\"\n"
             "  }\n}\n");
   return dir;
 }
@@ -132,8 +130,6 @@ TEST(RvizViewer, dlopenCreateAndRegisterCallbacks) {
   // (found via dlsym, initial value 0).
   EXPECT_GE(pubCount("rvizViewerPlannerPathPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerSmootherPathPubCount"), 0);
-  EXPECT_GE(pubCount("rvizViewerGlobalCostmapPubCount"), 0);
-  EXPECT_GE(pubCount("rvizViewerLocalCostmapPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerPlannerGoalPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerPlannerFeedbackPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerSmootherGoalPubCount"), 0);
@@ -173,21 +169,6 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
   const int smoother_before = pubCount("rvizViewerSmootherPathPubCount");
   ayanami::interfaces::NavigationCallbacks::on_smooth_path_result(smooth);
   EXPECT_GE(pubCount("rvizViewerSmootherPathPubCount"), smoother_before + 1);
-
-  ayanami::nav_msgs::OccupancyGrid grid;
-  grid.header.frame_id = "map";
-  grid.info.resolution = 0.5;
-  grid.info.width = 4;
-  grid.info.height = 4;
-  grid.data.assign(16, 0);
-  const int global_before = pubCount("rvizViewerGlobalCostmapPubCount");
-  ayanami::interfaces::NavigationCallbacks::on_costmap_visualization(
-      "global_costmap", grid);
-  EXPECT_GE(pubCount("rvizViewerGlobalCostmapPubCount"), global_before + 1);
-  const int local_before = pubCount("rvizViewerLocalCostmapPubCount");
-  ayanami::interfaces::NavigationCallbacks::on_costmap_visualization(
-      "local_costmap", grid);
-  EXPECT_GE(pubCount("rvizViewerLocalCostmapPubCount"), local_before + 1);
 
   // Non-SUCCEEDED paths are not published.
   ayanami::actions::GoalResult<ayanami::actions::GetPathResult> failed;

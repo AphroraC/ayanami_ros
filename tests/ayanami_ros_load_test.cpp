@@ -6,10 +6,10 @@
 // 1. AyanamiROS construction completes in order: GlobalConfig ->
 // loadExtensionModules -> loadNavigationModule (dlopen
 // libayanami_costmap_navigation.so + initialize + start) -> subscribeTopics.
-// 2. Extensions register before navigation->start: the
-// on_costmap_visualization subscription registered during rviz_viewer
-// construction must receive start's first wave of visualization emits
-// (via the extern "C" counting queries exported by the rviz_viewer .so).
+// 2. Extensions register before navigation->start: the per-layer costmap
+// slot subscriptions registered during costmap_viewer construction must
+// receive initialize's configure-time artifact emission (via the extern "C"
+// counting queries exported by the costmap_viewer .so).
 // 3. extension_modules / navigation_module members in place; start/stop
 // without crashing.
 
@@ -40,6 +40,7 @@ namespace {
 #endif
 
 const char* const g_rviz_viewer_so = RVIZ_VIEWER_SO;
+const char* const g_costmap_viewer_so = COSTMAP_VIEWER_SO;
 
 void writeFile(const std::filesystem::path& path,
                 const std::string& content) {
@@ -84,10 +85,11 @@ std::filesystem::path makeConfigDir() {
   {
     std::ofstream nav(dir / "costmap_navigation.json");
     nav << "{\n  \"navigation\": {\n"
+        << "    \"so_name\": \"libayanami_costmap_navigation.so\",\n"
         << "    \"behavior_tree_xml\": \"BT/navigation.xml\",\n"
         << "    \"behavior_tree_id\": \"NavigateWithReplanningAndSmoothing\",\n"
-        << "    \"planner_id\": \"costmap_smac\",\n"
-        << "    \"smoother_id\": \"costmap_savitzky\",\n"
+        << "    \"planner_id\": \"costmap_astar\",\n"
+        << "    \"smoother_id\": \"costmap_minsnap\",\n"
         << "    \"controller_id\": \"costmap_pid\",\n"
         << "    \"recovery_id\": \"clear_recovery\",\n"
         << "    \"clear_costmap_id\": \"clear_recovery\",\n"
@@ -98,18 +100,17 @@ std::filesystem::path makeConfigDir() {
         << "    \"smoother_frequency\": -1.0,\n"
         << "    \"controller_frequency\": 20.0,\n"
         << "    \"tick_frequency\": 100.0,\n"
-        << "    \"robot_frame\": \"base_footprint\",\n"
-        << "    \"costmap_visualization_rate\": 100.0\n"
+        << "    \"robot_frame\": \"base_footprint\"\n"
         << "  },\n"
         << "  \"modules\": {\n"
-        << "    \"config_planner\": \"costmap_smac_planner.json\",\n"
-        << "    \"config_smoother\": \"costmap_savitzky_smoother.json\",\n"
+        << "    \"config_planner\": \"costmap_astar_planner.json\",\n"
+        << "    \"config_smoother\": \"costmap_minsnap_smoother.json\",\n"
         << "    \"config_controller\": \"costmap_pid_controller.json\",\n"
         << "    \"config_recovery\": [\"costmap_clear_costmap_recovery.json\"]\n"
         << "  }\n";
   }
 
-  writeFile(dir / "costmap_smac_planner.json",
+  writeFile(dir / "costmap_astar_planner.json",
              "{\n  " +
                  module_json("planner", "costmap_smac",
                              "libayanami_costmap_smac_planner.so") +
@@ -118,13 +119,11 @@ std::filesystem::path makeConfigDir() {
                  "    \"cost_factor\": 0.5,\n    \"lethal_cost\": 254,\n"
                  "    \"neutral_cost\": 1.0,\n    \"use_final_approach\": false\n"
                  "  }\n}\n");
-  writeFile(dir / "costmap_savitzky_smoother.json",
+  writeFile(dir / "costmap_minsnap_smoother.json",
              "{\n  " +
-                 module_json("smoother", "costmap_savitzky",
-                             "libayanami_costmap_savitzky_smoother.so") +
-                 ",\n  \"costmap_savitzky_smoother\": {\n"
-                 "    \"do_refinement\": true,\n    \"refinement_num\": 2\n"
-                 "  }\n}\n");
+                 module_json("smoother", "costmap_minsnap",
+                             "libayanami_costmap_minsnap_smoother.so") +
+                 ",\n  \"costmap_minsnap\": {}\n}\n");
   writeFile(dir / "costmap_pid_controller.json",
              "{\n  " +
                  module_json("controller", "costmap_pid_controller",
@@ -150,24 +149,34 @@ std::filesystem::path makeConfigDir() {
         << "    \"resolution\": 0.5\n"
         << "  },\n"
         << "  \"costmap_global\": {\n"
-        << "    \"size_x\": 20,\n    \"size_y\": 20,\n"
         << "    \"rolling_window\": false,\n"
         << "    \"track_unknown\": false,\n"
-        << "    \"static_map\": \"" << (dir / "static_map.pgm").string() << "\",\n"
-        << "    \"inflation_radius\": 1.0,\n"
-        << "    \"inscribed_radius\": 0.8,\n"
-        << "    \"cost_scaling_factor\": 2.0\n"
+        << "    \"layers\": [\"layer_static.json\", \"layer_inflation.json\"]\n"
         << "  },\n"
         << "  \"costmap_local\": {\n"
         << "    \"size_x\": 20,\n    \"size_y\": 20,\n"
         << "    \"rolling_window\": true,\n"
         << "    \"track_unknown\": false,\n"
-        << "    \"inflation_radius\": 1.0,\n"
-        << "    \"inscribed_radius\": 0.8,\n"
-        << "    \"cost_scaling_factor\": 2.0\n"
+        << "    \"layers\": [\"layer_obstacle.json\", \"layer_inflation.json\"]\n"
         << "  }\n"
         << "}\n";
   }
+
+  writeFile(dir / "layer_static.json",
+            "{\"layer\": {\"name\": \"static_layer\", \"so_name\": "
+            "\"libayanami_costmap_static_layer.so\"},\n \"static_layer\": "
+            "{\"static_map\": \"" + (dir / "static_map.pgm").string() + "\"}}\n");
+  writeFile(dir / "layer_inflation.json",
+            "{\"layer\": {\"name\": \"inflation_layer\", \"so_name\": "
+            "\"libayanami_costmap_inflation_layer.so\"},\n \"inflation_layer\": "
+            "{\"inflation_radius\": 1.0, \"inscribed_radius\": 0.8, "
+            "\"cost_scaling_factor\": 2.0}}\n");
+  writeFile(dir / "layer_obstacle.json",
+            "{\"layer\": {\"name\": \"obstacle_layer\", \"so_name\": "
+            "\"libayanami_costmap_obstacle_layer.so\"},\n \"obstacle_layer\": {"
+            "\"combination\": \"overwrite\", \"footprint_clearing\": true, "
+            "\"clear_margin\": 1.0, \"observation_sources\": [\"scan\"], "
+            "\"scan\": {\"type\": \"laserscan\"}}}\n");
 
   writeFile(dir / "static_map.pgm", free_pgm(20, 20, 254));
   // Core contract: a static map is a PGM + JSON metadata PAIR (nav.json
@@ -232,20 +241,22 @@ std::filesystem::path makeConfigDir() {
             "{\n  \"extensions\": {\n"
             "    \"loading_extension_modules\": [\"" +
                  std::string(g_rviz_viewer_so) +
+                 "\", \"" +
+                 std::string(g_costmap_viewer_so) +
                  "\"]\n"
                  "  }\n}\n");
 
   return dir;
 }
 
-// Reads the costmap visualization publish count from the rviz_viewer .so
+// Reads the global-inflation publish count from the costmap_viewer .so
 // (the dlopen was already done by AyanamiROS with RTLD_GLOBAL; uses the real
 // output extension to verify load ordering instead of maintaining a separate
 // stub).
-int rvizViewerCostmapPubCount() {
+int costmapViewerGlobalInflationPubCount() {
   using Getter = int (*)();
   auto getter = reinterpret_cast<Getter>(dlsym(RTLD_DEFAULT,
-                                                "rvizViewerGlobalCostmapPubCount"));
+                                                "costmapViewerGlobalInflationPubCount"));
   if (getter == nullptr) {
     return -1;
   }
@@ -260,20 +271,35 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationModule) {
 
   ayanami_ros::AyanamiROS node(nh);
 
-  // 1) Extension modules loaded (libayanami_rviz_viewer.so dlopen +
-  // create_extension_module).
-  ASSERT_EQ(node.extensionModules().size(), 1u);
+  // 1) Extension modules loaded (libayanami_rviz_viewer.so +
+  // libayanami_costmap_viewer.so dlopen + create_extension_module).
+  ASSERT_EQ(node.extensionModules().size(), 2u);
 
   // 2) Core navigation host module loaded (dlopen
   // libayanami_costmap_navigation.so + initialize + start).
   ASSERT_NE(node.navigationModule(), nullptr);
 
-  // 3) Load ordering: extensions register before navigation->start. The
-  // constructor's loadNavigationModule->start emits on_costmap_visualization;
-  // if the order is wrong (nav before ext), rviz_viewer's subscription is not
-  // registered and the count stays 0. A count > 0 here proves extension
-  // construction completed before navigation start.
-  const int emits = rvizViewerCostmapPubCount();
+  // 3) Load ordering: extensions register before navigation->start.
+  // initialize's configureCoreMaps emits the per-layer artifacts (a static
+  // global may fire only once); if the order is wrong (nav before ext),
+  // costmap_viewer's subscription is not registered and the count stays 0.
+  // A count > 0 here proves extension construction completed before
+  // navigation start.
+  // The emission->publish chain is asynchronous (the viewer's own publisher
+  // thread; the core emits on its writer thread), so poll with a deadline
+  // instead of asserting synchronously. If the order were wrong (nav before
+  // ext), the subscription would miss the configure-time emission entirely
+  // and the count would stay 0 -- the timeout then fails the test, keeping
+  // the ordering property locked.
+  int emits = costmapViewerGlobalInflationPubCount();
+  {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(2);
+    while (emits <= 0 && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      emits = costmapViewerGlobalInflationPubCount();
+    }
+  }
   EXPECT_GT(emits, 0) <<
       "extension subscriptions must register before navigation_module->start()";
   EXPECT_EQ(node.configPath(), config_dir.string());

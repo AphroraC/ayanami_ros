@@ -67,7 +67,7 @@ Visualization Manager:
       Draw Behind: false
       Enabled: true
       Name: Global Costmap
-      Topic: /ayanami/global_costmap
+      Topic: /ayanami/global_costmap/inflation
       Unreliable: false
       Use Timestamp: false
       Value: true
@@ -77,7 +77,7 @@ Visualization Manager:
       Draw Behind: false
       Enabled: true
       Name: Local Costmap
-      Topic: /ayanami/local_costmap
+      Topic: /ayanami/local_costmap/inflation
       Unreliable: false
       Use Timestamp: false
       Value: true

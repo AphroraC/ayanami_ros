@@ -134,6 +134,10 @@ private:
   // config_ros.json::ayanami_ros boundary parameters.
   std::string laserscan_topic, pointcloud_topic, odom_topic, goal_topic;
   std::string map_frame, odom_frame, robot_frame;
+  // Host navigation module, declared by the ACTIVE ROUTE
+  // (routes/*.json::navigation.so_name); config_ros deliberately does not
+  // carry a second copy -- two switch lines could desync and boot the wrong
+  // map-family host against an unrelated route.
   std::string navigation_so_name;
 };
 

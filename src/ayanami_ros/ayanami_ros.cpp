@@ -35,8 +35,7 @@ std::string resolveConfigPath(const ros::NodeHandle& nh) {
 AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
 : nh(nh),
   config_path(resolveConfigPath(nh)),
-  tf_listener(nh),
-  navigation_so_name("libayanami_costmap_navigation.so") {
+  tf_listener(nh) {
   // verbatim ordering.
   // Note: in the default values, ros::package::getPath is only evaluated when
   // the param is missing (avoids triggering rospack's tinyxml2 symbol conflict
@@ -55,7 +54,24 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   // navigation.robot_frame). Keeping the two defaults equal means "neither
   // config sets it" resolves to one frame, not a silent mismatch.
   robot_frame = config_ros.param<std::string>("ayanami_ros", "robot_frame", "base_link");
-  navigation_so_name = config_ros.param<std::string>("ayanami_ros", "navigation_so_name", navigation_so_name);
+  // Host navigation module = the ACTIVE ROUTE's own declaration
+  // (config.json::global.config_navigation -> routes/*.json::navigation.so_name).
+  // The key used to live in config_ros.json, which made route switching a
+  // two-file edit: switching config.json alone booted the costmap host
+  // against a rosemap route, and the resulting uncaught
+  // "costmap_global.layers is required" killed the process with SIGABRT
+  // (roslaunch: "died of signal 6"). One route file now carries its own host,
+  // so the mismatch is unrepresentable.
+  const ayanami::Config nav_route(
+      ayanami::GlobalConfig::getConfigPath("config_navigation"));
+  if (!nav_route.hasParam("navigation", "so_name")) {
+    throw std::runtime_error(
+        "navigation.so_name missing in " +
+        ayanami::GlobalConfig::getConfigPath("config_navigation") +
+        " (each route config must declare its host navigation module)");
+  }
+  navigation_so_name =
+      nav_route.param<std::string>("navigation", "so_name", "");
 
   // robot_frame has one owner (config_navigation.json::navigation.robot_frame);
   // config_ros only mirrors it for the ROS-side TF producers. A mismatch means
@@ -76,7 +92,8 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   loadNavigationModule(config_ros);
   subscribeTopics();
 
-  spdlog::info(
+  SPDLOG_LOGGER_INFO(
+    ayanami::rosLogger(),
     "AyanamiROS initialized: config={} extensions={} navigation={}",
     config_path,
     extension_modules.size(),
@@ -184,19 +201,17 @@ void AyanamiROS::loadExtensionModules() {
   // extension_modules.
   const ayanami::Config extensions_config(
       ayanami::GlobalConfig::getConfigPath("config_extensions"));
-  const auto modules = extensions_config.param<std::vector<std::string>>(
-      "extensions", "loading_extension_modules", {});
+  const auto modules = extensions_config.param<std::vector<std::string>>("extensions", "loading_extension_modules", {});
   for (const auto& module : modules) {
-    spdlog::info("load ayanami_ros extension module {}", module);
+    SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "load ayanami_ros extension module {}", module);
     // The extension's context: logical name + the extensions config file. The
     // name is derived from the .so the same way the core derives it
     // (libayanami_<name>.so), and it doubles as the module's parameter section
     // key -- so the module never has to resolve the config path itself.
     const std::string name = extensionNameFromSo(module);
-    auto ext = ayanami::ExtensionModule::loadModule(
-        module, ayanami::ModuleContext{name, extensions_config});
+    auto ext = ayanami::ExtensionModule::loadModule(module, ayanami::ModuleContext{name, extensions_config});
     if (!ext) {
-      spdlog::warn("failed to load extension module {}", module);
+      SPDLOG_LOGGER_WARN(ayanami::rosLogger(), "failed to load extension module {}", module);
       continue;
     }
     extension_modules.push_back(std::move(ext));
@@ -205,7 +220,7 @@ void AyanamiROS::loadExtensionModules() {
 
 void AyanamiROS::loadNavigationModule(const ayanami::Config& config_ros) {
   (void)config_ros;
-  spdlog::info("load ayanami navigation module {}", navigation_so_name);
+  SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "load ayanami navigation module {}", navigation_so_name);
   // Common factory loading (4): ExtensionModule::loadModule ->
   // typed dynamic_pointer_cast<AbstractNavigation> (shared ownership).
   auto ext = ayanami::ExtensionModule::loadModule(navigation_so_name);
@@ -223,24 +238,25 @@ void AyanamiROS::loadNavigationModule(const ayanami::Config& config_ros) {
 void AyanamiROS::subscribeTopics() {
   if (!laserscan_topic.empty()) {
     laserscan_sub = nh.subscribe(laserscan_topic, 1, &AyanamiROS::laserscanCallback, this);
-    spdlog::info("subscribe obstacle laserscan topic={}", laserscan_topic);
+    SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "subscribe obstacle laserscan topic={}", laserscan_topic);
   }
   if (!pointcloud_topic.empty()) {
     pointcloud_sub = nh.subscribe(pointcloud_topic, 1, &AyanamiROS::pointcloudCallback, this);
-    spdlog::info("subscribe obstacle pointcloud topic={}", pointcloud_topic);
+    SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "subscribe obstacle pointcloud topic={}", pointcloud_topic);
   }
   if (!odom_topic.empty()) {
     odom_sub = nh.subscribe(odom_topic, 20, &AyanamiROS::odomCallback, this);
-    spdlog::info("subscribe odometry topic={}", odom_topic);
+    SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "subscribe odometry topic={}", odom_topic);
   }
   if (!goal_topic.empty()) {
     goal_sub = nh.subscribe(goal_topic, 1, &AyanamiROS::goalCallback, this);
-    spdlog::info("subscribe navigation goal topic={}", goal_topic);
+    SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "subscribe navigation goal topic={}", goal_topic);
   }
 }
 
 void AyanamiROS::goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
-  spdlog::info(
+  SPDLOG_LOGGER_INFO(
+    ayanami::rosLogger(),
     "navigation goal received frame={} x={:.3f} y={:.3f}",
     msg->header.frame_id,
     msg->pose.position.x,
@@ -348,8 +364,7 @@ void AyanamiROS::checkTfHealth() {
   }
   if (missing_edges.empty()) {
     if (tf_health_was_bad) {
-      spdlog::info("TF health check: all {} configured edges are available again",
-                   3);
+      SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "TF health check: all {} configured edges are available again", 3);
       tf_health_was_bad = false;
     }
     return;
@@ -359,20 +374,22 @@ void AyanamiROS::checkTfHealth() {
   if (due) {
     tf_health_last_log = now;
     tf_health_was_bad = true;
-    spdlog::warn(
-        "ROS TF health check: unavailable edges [{}]. Current frame "
-        "tree:\n{}\nIf odom<-base_footprint is missing, check that the "
-        "gazebo diff-drive module (libgazebo_ros_diff_drive, publishOdomTF) "
-        "loaded with the model; if map<-odom is missing, wait for or check "
-        "AMCL; leftover simulation instances may publish duplicate TF "
-        "frames",
-        missing_edges, tf_listener.framesAsString());
+    SPDLOG_LOGGER_WARN(
+      ayanami::rosLogger(),
+      "ROS TF health check: unavailable edges [{}]. Current frame "
+      "tree:\n{}\nIf odom<-base_footprint is missing, check that the "
+      "gazebo diff-drive module (libgazebo_ros_diff_drive, publishOdomTF) "
+      "loaded with the model; if map<-odom is missing, wait for or check "
+      "AMCL; leftover simulation instances may publish duplicate TF "
+      "frames",
+      missing_edges,
+      tf_listener.framesAsString());
   }
 }
 
 void AyanamiROS::loop() {
   ros::WallRate rate(50.0);
-  spdlog::info("AyanamiROS loop started rate=50.0Hz");
+  SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "AyanamiROS loop started rate=50.0Hz");
   auto last_tf_health = std::chrono::steady_clock::time_point{};
   while (ros::ok() && !kill_switch.load()) {
     if (std::chrono::steady_clock::now() - last_tf_health >
@@ -387,7 +404,7 @@ void AyanamiROS::loop() {
     ros::spinOnce();
     rate.sleep();
   }
-  spdlog::info("AyanamiROS loop exited");
+  SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "AyanamiROS loop exited");
 }
 
 }  // namespace ayanami_ros
