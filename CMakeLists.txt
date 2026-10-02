@@ -66,27 +66,17 @@ target_include_directories(rviz_viewer PRIVATE
 target_link_libraries(rviz_viewer PRIVATE ayanami_ros ayanami::ayanami)
 set_target_properties(rviz_viewer PROPERTIES PREFIX "libayanami_")
 
-# costmap_viewer: dedicated costmap output extension (all costmap publishing
+# rose_viewer: dedicated costmap output extension (all costmap publishing
 # moved out of rviz_viewer). Subscribes the core's per-layer artifact slots,
 # caches the artifacts long-term and republishes them from its own thread at
-# the configured rates (config_extensions.json::costmap_viewer).
-add_library(costmap_viewer SHARED
-  modules/costmap_viewer/costmap_viewer.cpp)
-target_include_directories(costmap_viewer PRIVATE
+# the configured rates (config_extensions.json::rose_viewer).
+add_library(rose_viewer SHARED
+  modules/rose_viewer/rose_viewer.cpp)
+target_include_directories(rose_viewer PRIVATE
   ${PROJECT_SOURCE_DIR}/modules)
-target_link_libraries(costmap_viewer PRIVATE ayanami_ros ayanami::ayanami)
-set_target_properties(costmap_viewer PROPERTIES PREFIX "libayanami_")
+target_link_libraries(rose_viewer PRIVATE ayanami_ros ayanami::ayanami)
+set_target_properties(rose_viewer PROPERTIES PREFIX "libayanami_")
 
-# rosemap_viewer: dedicated rosemap field output extension (mirrors
-# costmap_viewer). Subscribes on_rosemap_field, caches the field long-term
-# and republishes from its own thread at the configured rate
-# (config_extensions.json::rosemap_viewer).
-add_library(rosemap_viewer SHARED
-  modules/rosemap_viewer/rosemap_viewer.cpp)
-target_include_directories(rosemap_viewer PRIVATE
-  ${PROJECT_SOURCE_DIR}/modules)
-target_link_libraries(rosemap_viewer PRIVATE ayanami_ros ayanami::ayanami)
-set_target_properties(rosemap_viewer PROPERTIES PREFIX "libayanami_")
 
 # cmd_chassis_publisher: sole chassis command output extension (rm_msgs
 # allowed here; rviz_viewer stays rm_msgs-free). Loaded via
@@ -129,7 +119,7 @@ if(CATKIN_ENABLE_TESTING)
     target_link_libraries(ayanami_ros_load_test ayanami_ros ${CMAKE_DL_LIBS})
     target_compile_definitions(ayanami_ros_load_test PRIVATE
       RVIZ_VIEWER_SO="$<TARGET_FILE:rviz_viewer>"
-      COSTMAP_VIEWER_SO="$<TARGET_FILE:costmap_viewer>")
+      ROSE_VIEWER_SO="$<TARGET_FILE:rose_viewer>")
   endif()
 
   # Task 7: TF2Listener (tf2_ros Buffer + TransformListener + lookup_transform).
@@ -157,24 +147,14 @@ if(CATKIN_ENABLE_TESTING)
       RVIZ_VIEWER_SO="$<TARGET_FILE:rviz_viewer>")
   endif()
 
-  # Task: costmap_viewer ROS extension .so (dlopen; per-layer costmap slots
+  # Task: rose_viewer ROS extension .so (dlopen; per-layer costmap slots
   # -> cached latched ROS topics, republished from its own thread).
-  catkin_add_gtest(costmap_viewer_test tests/costmap_viewer_test.cpp)
-  ayanami_ros_include_test_in_all(costmap_viewer_test)
-  if(TARGET costmap_viewer_test)
-    target_link_libraries(costmap_viewer_test ayanami_ros ${CMAKE_DL_LIBS})
-    target_compile_definitions(costmap_viewer_test PRIVATE
-      COSTMAP_VIEWER_SO="$<TARGET_FILE:costmap_viewer>")
-  endif()
-
-  # Task: rosemap_viewer ROS extension .so (dlopen; on_rosemap_field ->
-  # cached latched ROS topic, edge-triggered + rate republish).
-  catkin_add_gtest(rosemap_viewer_test tests/rosemap_viewer_test.cpp)
-  ayanami_ros_include_test_in_all(rosemap_viewer_test)
-  if(TARGET rosemap_viewer_test)
-    target_link_libraries(rosemap_viewer_test ayanami_ros ${CMAKE_DL_LIBS})
-    target_compile_definitions(rosemap_viewer_test PRIVATE
-      ROSEMAP_VIEWER_SO="$<TARGET_FILE:rosemap_viewer>")
+  catkin_add_gtest(rose_viewer_test tests/rose_viewer_test.cpp)
+  ayanami_ros_include_test_in_all(rose_viewer_test)
+  if(TARGET rose_viewer_test)
+    target_link_libraries(rose_viewer_test ayanami_ros ${CMAKE_DL_LIBS})
+    target_compile_definitions(rose_viewer_test PRIVATE
+      ROSE_VIEWER_SO="$<TARGET_FILE:rose_viewer>")
   endif()
 
   catkin_add_gtest(cmd_chassis_publisher_test

@@ -18,9 +18,7 @@ std::atomic<int> g_planner_path_pub_count{0};
 std::atomic<int> g_smoother_path_pub_count{0};
 std::atomic<int> g_planner_goal_pub_count{0};
 std::atomic<int> g_planner_feedback_pub_count{0};
-std::atomic<int> g_smoother_goal_pub_count{0};
 std::atomic<int> g_smoother_feedback_pub_count{0};
-std::atomic<int> g_exe_path_goal_pub_count{0};
 std::atomic<int> g_exe_path_feedback_pub_count{0};
 std::atomic<int> g_exe_path_result_pub_count{0};
 std::atomic<int> g_recovery_goal_pub_count{0};
@@ -102,15 +100,9 @@ void RvizViewer::readConfig(const ayanami::ModuleContext& context) {
     planner_feedback_topic =
         extensions_config.param<std::string>(sec, "planner_feedback_topic",
                                              "/ayanami/planner/feedback");
-    smoother_input_path_topic =
-        extensions_config.param<std::string>(sec, "smoother_input_path_topic",
-                                             "/ayanami/smoother/input_path");
     smoother_feedback_topic =
         extensions_config.param<std::string>(sec, "smoother_feedback_topic",
                                              "/ayanami/smoother/feedback");
-    controller_path_topic =
-        extensions_config.param<std::string>(sec, "controller_path_topic",
-                                             "/ayanami/controller/path");
     controller_feedback_topic =
         extensions_config.param<std::string>(sec, "controller_feedback_topic",
                                              "/ayanami/controller/feedback");
@@ -147,12 +139,8 @@ void RvizViewer::advertiseTopics() {
         nh.advertise<geometry_msgs::PoseStamped>(planner_goal_topic, 1);
     planner_feedback_pub =
         nh.advertise<std_msgs::String>(planner_feedback_topic, 1);
-    smoother_input_path_pub =
-        nh.advertise<nav_msgs::Path>(smoother_input_path_topic, 1, true);
     smoother_feedback_pub =
         nh.advertise<std_msgs::String>(smoother_feedback_topic, 1);
-    controller_path_pub =
-        nh.advertise<nav_msgs::Path>(controller_path_topic, 1, true);
     controller_feedback_pub =
         nh.advertise<std_msgs::String>(controller_feedback_topic, 1);
     controller_status_pub =
@@ -168,14 +156,12 @@ void RvizViewer::advertiseTopics() {
     SPDLOG_LOGGER_INFO(
       ayanami::rosLogger(),
       "rviz_viewer publishers: planner_path={} smoother_path={} "
-      "planner_goal={} smoother_input={} "
-      "controller_path={} controller_status={} recovery_status={} "
+      "planner_goal={} "
+      "controller_status={} recovery_status={} "
       "navigation_status={} cmd_vel={}",
       planner_path_topic,
       smoother_path_topic,
       planner_goal_topic,
-      smoother_input_path_topic,
-      controller_path_topic,
       controller_status_topic,
       recovery_status_topic,
       navigation_status_topic,
@@ -215,11 +201,6 @@ void RvizViewer::registerCallbacks() {
             [this](
                 const ayanami::actions::GoalResult<ayanami::actions::GetPathResult>&
                     result) { publishPlannerPath(result); });
-    cb_smooth_goal =
-        ayanami::interfaces::NavigationCallbacks::on_smooth_path_goal.subscribe(
-            [this](const ayanami::actions::SmoothPathGoal& goal) {
-              publishSmootherGoal(goal);
-            });
     cb_smooth_feedback =
         ayanami::interfaces::NavigationCallbacks::on_smooth_path_feedback.subscribe(
             [this](const ayanami::actions::SmoothPathFeedback& feedback) {
@@ -230,11 +211,6 @@ void RvizViewer::registerCallbacks() {
             [this](const ayanami::actions::GoalResult<
                        ayanami::actions::SmoothPathResult>& result) {
               publishSmootherPath(result);
-            });
-    cb_exe_goal =
-        ayanami::interfaces::NavigationCallbacks::on_exe_path_goal.subscribe(
-            [this](const ayanami::actions::ExePathGoal& goal) {
-              publishExePathGoal(goal);
             });
     cb_exe_feedback =
         ayanami::interfaces::NavigationCallbacks::on_exe_path_feedback.subscribe(
@@ -274,10 +250,8 @@ void RvizViewer::unregisterCallbacks() {
     cb_get_path_goal.reset();
     cb_get_path_feedback.reset();
     cb_get_path.reset();
-    cb_smooth_goal.reset();
     cb_smooth_feedback.reset();
     cb_smooth_path.reset();
-    cb_exe_goal.reset();
     cb_exe_feedback.reset();
     cb_exe_result.reset();
     cb_recovery_goal.reset();
@@ -309,11 +283,6 @@ void RvizViewer::publishPlannerPath(
     planner_path_pub.publish(toRosPath(result.result.path));
 }
 
-void RvizViewer::publishSmootherGoal(const ayanami::actions::SmoothPathGoal& goal) {
-    g_smoother_goal_pub_count.fetch_add(1);
-    smoother_input_path_pub.publish(toRosPath(goal.path));
-}
-
 void RvizViewer::publishSmootherFeedback(
       const ayanami::actions::SmoothPathFeedback& feedback) {
     g_smoother_feedback_pub_count.fetch_add(1);
@@ -330,11 +299,6 @@ void RvizViewer::publishSmootherPath(
 }
     g_smoother_path_pub_count.fetch_add(1);
     smoother_path_pub.publish(toRosPath(result.result.smoothed_path));
-}
-
-void RvizViewer::publishExePathGoal(const ayanami::actions::ExePathGoal& goal) {
-    g_exe_path_goal_pub_count.fetch_add(1);
-    controller_path_pub.publish(toRosPath(goal.path));
 }
 
 void RvizViewer::publishExePathFeedback(
@@ -440,14 +404,8 @@ extern "C" int rvizViewerPlannerGoalPubCount() {
 extern "C" int rvizViewerPlannerFeedbackPubCount() {
   return ayanami_ros::g_planner_feedback_pub_count.load();
 }
-extern "C" int rvizViewerSmootherGoalPubCount() {
-  return ayanami_ros::g_smoother_goal_pub_count.load();
-}
 extern "C" int rvizViewerSmootherFeedbackPubCount() {
   return ayanami_ros::g_smoother_feedback_pub_count.load();
-}
-extern "C" int rvizViewerExePathGoalPubCount() {
-  return ayanami_ros::g_exe_path_goal_pub_count.load();
 }
 extern "C" int rvizViewerExePathFeedbackPubCount() {
   return ayanami_ros::g_exe_path_feedback_pub_count.load();

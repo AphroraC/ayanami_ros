@@ -132,9 +132,7 @@ TEST(RvizViewer, dlopenCreateAndRegisterCallbacks) {
   EXPECT_GE(pubCount("rvizViewerSmootherPathPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerPlannerGoalPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerPlannerFeedbackPubCount"), 0);
-  EXPECT_GE(pubCount("rvizViewerSmootherGoalPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerSmootherFeedbackPubCount"), 0);
-  EXPECT_GE(pubCount("rvizViewerExePathGoalPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerExePathFeedbackPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerExePathResultPubCount"), 0);
   EXPECT_GE(pubCount("rvizViewerRecoveryGoalPubCount"), 0);
@@ -195,23 +193,11 @@ TEST(RvizViewer, emitCallbacksPublishRos) {
   ayanami::interfaces::NavigationCallbacks::on_get_path_feedback(planner_fb);
   EXPECT_GE(pubCount("rvizViewerPlannerFeedbackPubCount"), pf_before + 1);
 
-  ayanami::actions::SmoothPathGoal smoother_goal;
-  smoother_goal.path = makePath();
-  const int sg_before = pubCount("rvizViewerSmootherGoalPubCount");
-  ayanami::interfaces::NavigationCallbacks::on_smooth_path_goal(smoother_goal);
-  EXPECT_GE(pubCount("rvizViewerSmootherGoalPubCount"), sg_before + 1);
-
   ayanami::actions::SmoothPathFeedback smoother_fb;
   smoother_fb.message = "smoothing";
   const int sf_before = pubCount("rvizViewerSmootherFeedbackPubCount");
   ayanami::interfaces::NavigationCallbacks::on_smooth_path_feedback(smoother_fb);
   EXPECT_GE(pubCount("rvizViewerSmootherFeedbackPubCount"), sf_before + 1);
-
-  ayanami::actions::ExePathGoal exe_goal;
-  exe_goal.path = makePath();
-  const int eg_before = pubCount("rvizViewerExePathGoalPubCount");
-  ayanami::interfaces::NavigationCallbacks::on_exe_path_goal(exe_goal);
-  EXPECT_GE(pubCount("rvizViewerExePathGoalPubCount"), eg_before + 1);
 
   ayanami::actions::ExePathFeedback exe_fb;
   exe_fb.message = "tracking";

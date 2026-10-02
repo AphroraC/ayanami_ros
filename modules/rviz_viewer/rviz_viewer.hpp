@@ -48,13 +48,11 @@ class RvizViewer final : public ayanami::ExtensionModule {
   void publishPlannerPath(
       const ayanami::actions::GoalResult<ayanami::actions::GetPathResult>&
           result);
-  void publishSmootherGoal(const ayanami::actions::SmoothPathGoal& goal);
   void publishSmootherFeedback(
       const ayanami::actions::SmoothPathFeedback& feedback);
   void publishSmootherPath(
       const ayanami::actions::GoalResult<ayanami::actions::SmoothPathResult>&
           result);
-  void publishExePathGoal(const ayanami::actions::ExePathGoal& goal);
   void publishExePathFeedback(
       const ayanami::actions::ExePathFeedback& feedback);
   void publishExePathResult(
@@ -72,8 +70,8 @@ class RvizViewer final : public ayanami::ExtensionModule {
   ros::NodeHandle nh;
   ros::Publisher planner_path_pub, smoother_path_pub,
       planner_goal_pub,
-      planner_feedback_pub, smoother_input_path_pub, smoother_feedback_pub,
-      controller_path_pub, controller_feedback_pub, controller_status_pub,
+      planner_feedback_pub, smoother_feedback_pub,
+      controller_feedback_pub, controller_status_pub,
       recovery_goal_pub, recovery_feedback_pub, recovery_status_pub,
       navigation_status_pub, cmd_vel_pub;
   std::string cmd_vel_topic = "/cmd_vel";
@@ -81,9 +79,7 @@ class RvizViewer final : public ayanami::ExtensionModule {
   std::string smoother_path_topic = "/ayanami/smoother/path";
   std::string planner_goal_topic = "/ayanami/planner/goal";
   std::string planner_feedback_topic = "/ayanami/planner/feedback";
-  std::string smoother_input_path_topic = "/ayanami/smoother/input_path";
   std::string smoother_feedback_topic = "/ayanami/smoother/feedback";
-  std::string controller_path_topic = "/ayanami/controller/path";
   std::string controller_feedback_topic = "/ayanami/controller/feedback";
   std::string controller_status_topic = "/ayanami/controller/status";
   std::string recovery_goal_topic = "/ayanami/recovery/goal";
@@ -94,7 +90,7 @@ class RvizViewer final : public ayanami::ExtensionModule {
   std::string last_recovery_id;
   ayanami::CallbackSubscription cb_get_path, cb_smooth_path, cb_velocity_cmd,
       cb_get_path_goal,
-      cb_get_path_feedback, cb_smooth_goal, cb_smooth_feedback, cb_exe_goal,
+      cb_get_path_feedback, cb_smooth_feedback,
       cb_exe_feedback, cb_exe_result, cb_recovery_goal, cb_recovery_feedback,
       cb_recovery_result, cb_navigation_result;
 };

@@ -5,11 +5,11 @@
 // (libayanami_rviz_viewer.so) to verify:
 // 1. AyanamiROS construction completes in order: GlobalConfig ->
 // loadExtensionModules -> loadNavigationModule (dlopen
-// libayanami_costmap_navigation.so + initialize + start) -> subscribeTopics.
+// libayanami_rose_navigation_fsm.so + initialize + start) -> subscribeTopics.
 // 2. Extensions register before navigation->start: the per-layer costmap
-// slot subscriptions registered during costmap_viewer construction must
+// slot subscriptions registered during rose_viewer construction must
 // receive initialize's configure-time artifact emission (via the extern "C"
-// counting queries exported by the costmap_viewer .so).
+// counting queries exported by the rose_viewer .so).
 // 3. extension_modules / navigation_module members in place; start/stop
 // without crashing.
 
@@ -40,7 +40,7 @@ namespace {
 #endif
 
 const char* const g_rviz_viewer_so = RVIZ_VIEWER_SO;
-const char* const g_costmap_viewer_so = COSTMAP_VIEWER_SO;
+const char* const g_rose_viewer_so = ROSE_VIEWER_SO;
 
 void writeFile(const std::filesystem::path& path,
                 const std::string& content) {
@@ -68,8 +68,7 @@ std::string free_pgm(int width, int height, int max_value) {
   return content;
 }
 
-// Full M1 config set (modeled on the headless_e2e structure) +
-// config_ros.json.
+// FSM-era config set (modeled on the fsm e2e structure) + config_ros.json.
 // Module .so files use bare names: the catkin test environment's
 // LD_LIBRARY_PATH already contains devel/lib.
 std::filesystem::path makeConfigDir() {
@@ -79,104 +78,96 @@ std::filesystem::path makeConfigDir() {
 
   writeFile(dir / "config.json",
              "{\n  \"global\": {\n"
-             "    \"config_navigation\": \"costmap_navigation.json\"\n"
+             "    \"config_navigation\": \"fsm_navigation.json\"\n"
              "  }\n}\n");
 
   {
-    std::ofstream nav(dir / "costmap_navigation.json");
+    std::ofstream nav(dir / "fsm_navigation.json");
     nav << "{\n  \"navigation\": {\n"
-        << "    \"so_name\": \"libayanami_costmap_navigation.so\",\n"
-        << "    \"behavior_tree_xml\": \"BT/navigation.xml\",\n"
-        << "    \"behavior_tree_id\": \"NavigateWithReplanningAndSmoothing\",\n"
-        << "    \"planner_id\": \"costmap_astar\",\n"
-        << "    \"smoother_id\": \"costmap_minsnap\",\n"
-        << "    \"controller_id\": \"costmap_pid\",\n"
-        << "    \"recovery_id\": \"clear_recovery\",\n"
-        << "    \"clear_costmap_id\": \"clear_recovery\",\n"
-        << "    \"spin_id\": \"clear_recovery\",\n"
-        << "    \"wait_id\": \"clear_recovery\",\n"
-        << "    \"backup_id\": \"clear_recovery\",\n"
-        << "    \"planner_frequency\": 100.0,\n"
+        << "    \"so_name\": \"libayanami_rose_navigation_fsm.so\",\n"
+        << "    \"config_planner\": \"planner.json\",\n"
+        << "    \"config_smoother\": \"smoother.json\",\n"
+        << "    \"config_controller\": \"controller.json\",\n"
+        << "    \"config_recovery\": [\"recovery.json\"],\n"
+        << "    \"config_goal_checker\": \"goal_checker.json\",\n"
+        << "    \"config_progress_checker\": \"progress_checker.json\",\n"
+        << "    \"fsm_frequency\": 50.0,\n"
+        << "    \"planner_frequency\": -1.0,\n"
         << "    \"smoother_frequency\": -1.0,\n"
+        << "    \"smoother_timeout\": 2.0,\n"
         << "    \"controller_frequency\": 20.0,\n"
-        << "    \"tick_frequency\": 100.0,\n"
-        << "    \"robot_frame\": \"base_footprint\"\n"
+        << "    \"max_nav_retries\": 6,\n"
+        << "    \"oscillation_distance\": 0.1,\n"
+        << "    \"oscillation_timeout\": 3600.0,\n"
+        << "    \"controller_patience\": -1.0,\n"
+        << "    \"recovery_patience\": 0.0,\n"
+        << "    \"max_vel_x\": 2.0,\n    \"max_vel_y\": 2.0,\n"
+        << "    \"max_vel_theta\": 2.0,\n"
+        << "    \"robot_frame\": \"base_footprint\",\n"
+        << "    \"velocity_timeout\": 0.25\n"
         << "  },\n"
-        << "  \"modules\": {\n"
-        << "    \"config_planner\": \"costmap_astar_planner.json\",\n"
-        << "    \"config_smoother\": \"costmap_minsnap_smoother.json\",\n"
-        << "    \"config_controller\": \"costmap_pid_controller.json\",\n"
-        << "    \"config_recovery\": [\"costmap_clear_costmap_recovery.json\"]\n"
-        << "  }\n";
-  }
-
-  writeFile(dir / "costmap_astar_planner.json",
-             "{\n  " +
-                 module_json("planner", "costmap_smac",
-                             "libayanami_costmap_smac_planner.so") +
-                 ",\n  \"costmap_smac_planner\": {\n"
-                 "    \"use_diagonal\": true,\n    \"tolerance\": 0.0,\n"
-                 "    \"cost_factor\": 0.5,\n    \"lethal_cost\": 254,\n"
-                 "    \"neutral_cost\": 1.0,\n    \"use_final_approach\": false\n"
-                 "  }\n}\n");
-  writeFile(dir / "costmap_minsnap_smoother.json",
-             "{\n  " +
-                 module_json("smoother", "costmap_minsnap",
-                             "libayanami_costmap_minsnap_smoother.so") +
-                 ",\n  \"costmap_minsnap\": {}\n}\n");
-  writeFile(dir / "costmap_pid_controller.json",
-             "{\n  " +
-                 module_json("controller", "costmap_pid_controller",
-                             "libayanami_costmap_pid_controller.so") +
-                 ",\n  \"costmap_pid_controller\": {\n"
-                 "    \"max_vel_x\": 2.0,\n    \"max_vel_theta\": 1.0,\n"
-                 "    \"goal_tolerance\": 0.1,\n    \"mode\": \"diff\"\n"
-                 "  }\n}\n");
-  writeFile(dir / "costmap_clear_costmap_recovery.json",
-             "{\n  \"recovery\": {\n"
-             "    \"name\": \"clear_recovery\",\n"
-             "    \"so_name\": \"libayanami_costmap_clear_costmap_recovery.so\",\n"
-             "    \"clear_radius\": 1.0,\n    \"affected_maps\": \"both\"\n"
-             "  }\n}\n");
-
-  {
-    // costmap parameters merged into costmap_navigation.json (the original
-    // costmap.json was removed).
-    std::ofstream nav(dir / "costmap_navigation.json", std::ios::app);
-    nav << ",\n  \"costmap\": {\n"
+        << "  \"esdfmap\": {\n"
+        << "    \"max_distance\": 3.0,\n"
+        << "    \"update_rate\": 50.0,\n"
+        << "    \"stale_timeout\": 0.0\n"
+        << "  },\n"
+        << "  \"costmap\": {\n"
         << "    \"global_frame\": \"map\",\n"
         << "    \"local_frame\": \"odom\",\n"
+        << "    \"robot_frame\": \"base_footprint\",\n"
         << "    \"resolution\": 0.5\n"
         << "  },\n"
         << "  \"costmap_global\": {\n"
-        << "    \"rolling_window\": false,\n"
-        << "    \"track_unknown\": false,\n"
-        << "    \"layers\": [\"layer_static.json\", \"layer_inflation.json\"]\n"
+        << "    \"rolling_window\": false,\n    \"track_unknown\": false,\n"
+        << "    \"static_layer\": {\n"
+        << "      \"static_map\": \"" << (dir / "static_map.pgm").string()
+        << "\"\n"
+        << "    },\n"
+        << "    \"inflation_layer\": {\n"
+        << "      \"inflation_radius\": 1.0, \"inscribed_radius\": 0.8, "
+           "\"cost_scaling_factor\": 2.0\n"
+        << "    }\n"
         << "  },\n"
         << "  \"costmap_local\": {\n"
         << "    \"size_x\": 20,\n    \"size_y\": 20,\n"
-        << "    \"rolling_window\": true,\n"
-        << "    \"track_unknown\": false,\n"
-        << "    \"layers\": [\"layer_obstacle.json\", \"layer_inflation.json\"]\n"
+        << "    \"rolling_window\": true,\n    \"track_unknown\": false,\n"
+        << "    \"obstacle_layer\": {\n"
+        << "      \"combination\": \"overwrite\", "
+           "\"footprint_clearing\": true,\n"
+        << "      \"observation_sources\": [\"scan\"],\n"
+        << "      \"scan\": {\"type\": \"laserscan\"}\n"
+        << "    },\n"
+        << "    \"inflation_layer\": {\n"
+        << "      \"inflation_radius\": 1.0, \"inscribed_radius\": 0.8, "
+           "\"cost_scaling_factor\": 2.0\n"
+        << "    }\n"
         << "  }\n"
         << "}\n";
   }
 
-  writeFile(dir / "layer_static.json",
-            "{\"layer\": {\"name\": \"static_layer\", \"so_name\": "
-            "\"libayanami_costmap_static_layer.so\"},\n \"static_layer\": "
-            "{\"static_map\": \"" + (dir / "static_map.pgm").string() + "\"}}\n");
-  writeFile(dir / "layer_inflation.json",
-            "{\"layer\": {\"name\": \"inflation_layer\", \"so_name\": "
-            "\"libayanami_costmap_inflation_layer.so\"},\n \"inflation_layer\": "
-            "{\"inflation_radius\": 1.0, \"inscribed_radius\": 0.8, "
-            "\"cost_scaling_factor\": 2.0}}\n");
-  writeFile(dir / "layer_obstacle.json",
-            "{\"layer\": {\"name\": \"obstacle_layer\", \"so_name\": "
-            "\"libayanami_costmap_obstacle_layer.so\"},\n \"obstacle_layer\": {"
-            "\"combination\": \"overwrite\", \"footprint_clearing\": true, "
-            "\"clear_margin\": 1.0, \"observation_sources\": [\"scan\"], "
-            "\"scan\": {\"type\": \"laserscan\"}}}\n");
+  writeFile(dir / "planner.json",
+             "{\n  " +
+                 module_json("planner", "costmap_astar_planner",
+                             "libayanami_costmap_astar_planner.so") +
+                 ",\n  \"costmap_astar_planner\": {}\n}\n");
+  writeFile(dir / "smoother.json",
+             "{\n  " +
+                 module_json("smoother", "esdfmap_minco_smoother",
+                             "libayanami_esdfmap_minco_smoother.so") +
+                 ",\n  \"esdfmap_minco_smoother\": {}\n}\n");
+  writeFile(dir / "controller.json",
+             "{\n  " +
+                 module_json("controller", "abstract_pid_controller",
+                             "libayanami_abstract_pid_controller.so") +
+                 ",\n  \"abstract_pid_controller\": {\n"
+                 "    \"max_vel_x\": 2.0,\n    \"max_vel_theta\": 1.0,\n"
+                 "    \"goal_tolerance\": 0.1,\n    \"mode\": \"diff\"\n"
+                 "  }\n}\n");
+  writeFile(dir / "recovery.json",
+             "{\n  " +
+                 module_json("recovery", "abstract_nothing_recovery",
+                             "libayanami_abstract_nothing_recovery.so") +
+                 ",\n  \"abstract_nothing_recovery\": {}\n}\n");
 
   writeFile(dir / "static_map.pgm", free_pgm(20, 20, 254));
   // Core contract: a static map is a PGM + JSON metadata PAIR (nav.json
@@ -184,45 +175,6 @@ std::filesystem::path makeConfigDir() {
   // configureCoreMaps static-layer load fails.
   writeFile(dir / "static_map.json",
             R"({"map": {"resolution": 0.5, "origin": [0.0, 0.0, 0.0]}})");
-
-  writeFile(dir / "BT" / "navigation.xml",
-             R"(<root BTCPP_format="4" main_tree_to_execute="NavigateWithReplanningAndSmoothing">
-  <BehaviorTree ID="NavigateWithReplanningAndSmoothing">
-    <RecoveryNode name="NavigateRecovery" number_of_retries="6">
-      <PipelineSequence name="NavigateWithReplanning">
-        <RateController hz="{planner_frequency}">
-          <RecoveryNode name="ComputePath" number_of_retries="1">
-            <Sequence>
-              <ComputePathToPose goal="{goal}" path="{raw_path}"/>
-              <IsPathValid path="{raw_path}"/>
-              <SmoothPath  input_path="{raw_path}" path="{smoothed_path}"/>
-              <IsPathValid path="{smoothed_path}"/>
-            </Sequence>
-            <Sequence>
-              <Recovery recovery="{clear_costmap_id}"/>
-              <AlwaysFailure/>
-            </Sequence>
-          </RecoveryNode>
-        </RateController>
-        <RecoveryNode name="FollowPath" number_of_retries="1">
-          <FollowPath path="{smoothed_path}" frequency="{controller_frequency}"/>
-          <Sequence>
-            <Recovery recovery="{clear_costmap_id}"/>
-            <AlwaysFailure/>
-          </Sequence>
-        </RecoveryNode>
-      </PipelineSequence>
-      <ReactiveFallback name="RecoveryActions">
-        <GoalUpdated goal="{goal}"/>
-        <RecoverySequence name="RecoveryActions">
-          <Sequence><Recovery recovery="{spin_id}"/>    <AlwaysFailure/></Sequence>
-          <Sequence><Recovery recovery="{wait_id}"/>    <AlwaysFailure/></Sequence>
-          <Sequence><Recovery recovery="{backup_id}"/>  <AlwaysFailure/></Sequence>
-        </RecoverySequence>
-      </ReactiveFallback>
-    </RecoveryNode>
-  </BehaviorTree>
-</root>)");
 
   writeFile(dir / "config_ros.json",
              "{\n  \"ayanami_ros\": {\n"
@@ -242,21 +194,21 @@ std::filesystem::path makeConfigDir() {
             "    \"loading_extension_modules\": [\"" +
                  std::string(g_rviz_viewer_so) +
                  "\", \"" +
-                 std::string(g_costmap_viewer_so) +
+                 std::string(g_rose_viewer_so) +
                  "\"]\n"
                  "  }\n}\n");
 
   return dir;
 }
 
-// Reads the global-inflation publish count from the costmap_viewer .so
+// Reads the global-inflation publish count from the rose_viewer .so
 // (the dlopen was already done by AyanamiROS with RTLD_GLOBAL; uses the real
 // output extension to verify load ordering instead of maintaining a separate
 // stub).
-int costmapViewerGlobalInflationPubCount() {
+int roseViewerGlobalInflationPubCount() {
   using Getter = int (*)();
   auto getter = reinterpret_cast<Getter>(dlsym(RTLD_DEFAULT,
-                                                "costmapViewerGlobalInflationPubCount"));
+                                                "roseViewerGlobalInflationPubCount"));
   if (getter == nullptr) {
     return -1;
   }
@@ -272,17 +224,17 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationModule) {
   ayanami_ros::AyanamiROS node(nh);
 
   // 1) Extension modules loaded (libayanami_rviz_viewer.so +
-  // libayanami_costmap_viewer.so dlopen + create_extension_module).
+  // libayanami_rose_viewer.so dlopen + create_extension_module).
   ASSERT_EQ(node.extensionModules().size(), 2u);
 
   // 2) Core navigation host module loaded (dlopen
-  // libayanami_costmap_navigation.so + initialize + start).
+  // libayanami_rose_navigation_fsm.so + initialize + start).
   ASSERT_NE(node.navigationModule(), nullptr);
 
   // 3) Load ordering: extensions register before navigation->start.
   // initialize's configureCoreMaps emits the per-layer artifacts (a static
   // global may fire only once); if the order is wrong (nav before ext),
-  // costmap_viewer's subscription is not registered and the count stays 0.
+  // rose_viewer's subscription is not registered and the count stays 0.
   // A count > 0 here proves extension construction completed before
   // navigation start.
   // The emission->publish chain is asynchronous (the viewer's own publisher
@@ -291,13 +243,13 @@ TEST(AyanamiROS, initLoadExtensionsBeforeNavigationModule) {
   // ext), the subscription would miss the configure-time emission entirely
   // and the count would stay 0 -- the timeout then fails the test, keeping
   // the ordering property locked.
-  int emits = costmapViewerGlobalInflationPubCount();
+  int emits = roseViewerGlobalInflationPubCount();
   {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(2);
     while (emits <= 0 && std::chrono::steady_clock::now() < deadline) {
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
-      emits = costmapViewerGlobalInflationPubCount();
+      emits = roseViewerGlobalInflationPubCount();
     }
   }
   EXPECT_GT(emits, 0) <<

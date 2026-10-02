@@ -26,7 +26,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <costmap_2d_layers/static_layer.hpp>
+#include <costmap/static_layer.hpp>
 #include <ayanami/utility/config.hpp>
 
 namespace {
@@ -74,11 +74,12 @@ std::string route_path(const char* relative) {
   return (std::filesystem::path(AYANAMI_TEST_CONFIG_DIR) / relative).string();
 }
 
-const char* const k_costmap_route = "routes/costmap_navigation.json";
-const char* const k_rosemap_route = "routes/rosemap_navigation.json";
+const char* const k_costmap_route = "routes/fsm_costmap_navigation.json";
+const char* const k_rosemap_route = "routes/fsm_rose_navigation.json";
+const char* const k_neupan_route = "routes/fsm_neupan_navigation.json";
 
 bool pgm_loadable(const std::string& path) {
-  costmap_2d_layers::StaticLayer layer;
+  costmap_2d::StaticLayer layer;
   try {
     layer.setMapPath(path, 0.05, 0.0, 0.0);
   } catch (...) {
@@ -157,7 +158,7 @@ TEST(ConfigSpecVerify, routeConfigsDeclareHostModule) {
     const auto doc = read_route_json(k_costmap_route);
     ASSERT_TRUE(doc.at("navigation").contains("so_name"));
     EXPECT_EQ(doc.at("navigation").at("so_name").get<std::string>(),
-              "libayanami_costmap_navigation.so");
+              "libayanami_costmap_navigation_fsm.so");
     EXPECT_TRUE(doc.contains("costmap_global"));
     EXPECT_TRUE(doc.contains("costmap_local"));
   }
@@ -165,8 +166,22 @@ TEST(ConfigSpecVerify, routeConfigsDeclareHostModule) {
     const auto doc = read_route_json(k_rosemap_route);
     ASSERT_TRUE(doc.at("navigation").contains("so_name"));
     EXPECT_EQ(doc.at("navigation").at("so_name").get<std::string>(),
-              "libayanami_rosemap_navigation.so");
-    EXPECT_TRUE(doc.contains("rosemap_field"));
+              "libayanami_rose_navigation_fsm.so");
+    EXPECT_TRUE(doc.contains("costmap_global"));
+    EXPECT_TRUE(doc.contains("costmap_local"));
+    EXPECT_TRUE(doc.contains("esdfmap"));
+  }
+  {
+    // The neupan controller route: costmap host + the neupan controller
+    // module (obstacle feed = the costmap presence mask).
+    const auto doc = read_route_json(k_neupan_route);
+    ASSERT_TRUE(doc.at("navigation").contains("so_name"));
+    EXPECT_EQ(doc.at("navigation").at("so_name").get<std::string>(),
+              "libayanami_costmap_navigation_fsm.so");
+    EXPECT_EQ(doc.at("navigation").at("config_controller").get<std::string>(),
+              "modules/costmap_neupan_controller.json");
+    EXPECT_TRUE(doc.contains("costmap_global"));
+    EXPECT_TRUE(doc.contains("costmap_local"));
   }
 }
 
@@ -203,10 +218,13 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
             "/ayanami/planner/path");
   EXPECT_EQ(cfg.param<std::string>(sec, "smoother_path_topic", ""),
             "/ayanami/smoother/path");
-  EXPECT_EQ(cfg.param<std::string>(sec, "smoother_input_path_topic", ""),
-            "/ayanami/smoother/input_path");
-  EXPECT_EQ(cfg.param<std::string>(sec, "controller_path_topic", ""),
-            "/ayanami/controller/path");
+  // The smoother input path and the controller follow path are no longer
+  // published by rviz_viewer (the smoother path result and the controller
+  // status carry the visualization-relevant state).
+  EXPECT_EQ(cfg.param<std::string>(sec, "smoother_input_path_topic", "__absent__"),
+            "__absent__");
+  EXPECT_EQ(cfg.param<std::string>(sec, "controller_path_topic", "__absent__"),
+            "__absent__");
   // Costmap topics moved to the dedicated costmap_viewer section (rviz_viewer
   // no longer publishes any map).
   EXPECT_EQ(cfg.param<std::string>(sec, "global_costmap_topic", "__absent__"),
@@ -236,7 +254,7 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
   // (global static/inflation, local obstacle/inflation), each cached
   // long-term and republished at ITS OWN rate (the global layers are
   // static -- 0.1 Hz default; the local layers follow the robot).
-  const std::string cv_sec = "costmap_viewer";
+  const std::string cv_sec = "rose_viewer";
   EXPECT_EQ(cfg.param<std::string>(cv_sec, "global_static_topic", ""),
             "/ayanami/global_costmap/static");
   EXPECT_EQ(cfg.param<std::string>(cv_sec, "global_inflation_topic", ""),
@@ -250,12 +268,9 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
   EXPECT_DOUBLE_EQ(cfg.param<double>(cv_sec, "local_obstacle_rate", 0.0), 5.0);
   EXPECT_DOUBLE_EQ(cfg.param<double>(cv_sec, "local_inflation_rate", 0.0), 5.0);
 
-  // rosemap_viewer: dedicated rosemap field output (same cache + rate
-  // pattern as costmap_viewer; the field topic moved off the legacy slot).
-  const std::string rm_sec = "rosemap_viewer";
-  EXPECT_EQ(cfg.param<std::string>(rm_sec, "field_topic", ""),
-            "/ayanami/rosemap_field");
-  EXPECT_DOUBLE_EQ(cfg.param<double>(rm_sec, "field_rate", 0.0), 5.0);
+  // rosemap_viewer is gone with the rosemap family (the FSM era has no
+  // field-output slot); the section must not come back.
+  EXPECT_FALSE(cfg.hasSection("rosemap_viewer"));
   // rviz_viewer no longer publishes any velocity command (rviz_viewer stays
   // rm_msgs-free); /cmd_chassis belongs to cmd_chassis_publisher.
   EXPECT_FALSE(cfg.hasParam(sec, "cmd_vel_topic"));
@@ -317,16 +332,14 @@ TEST(ConfigSpecVerify, costmapGazeboAlignment) {
   // fresh dynamic obstacle marks live exclusively in the local rolling map,
   // and the global map changes only through configure/clear commands (no
   // periodic update_frequency needed).
-  const auto& global_layers = nav_doc.at("costmap_global").at("layers");
-  ASSERT_EQ(global_layers.size(), 2u);
-  EXPECT_EQ(global_layers[0].get<std::string>(), "static_layer");
-  EXPECT_EQ(global_layers[1].get<std::string>(), "inflation_layer");
+  ASSERT_TRUE(nav_doc.at("costmap_global").contains("static_layer"));
+  ASSERT_TRUE(nav_doc.at("costmap_global").contains("inflation_layer"));
   EXPECT_FALSE(nav_doc.at("costmap_global").contains("obstacle_layer"));
   EXPECT_FALSE(nav_doc.at("costmap_global").contains("update_frequency"));
-  const auto& local_layers = nav_doc.at("costmap_local").at("layers");
-  ASSERT_EQ(local_layers.size(), 2u);
-  EXPECT_EQ(local_layers[0].get<std::string>(), "obstacle_layer");
-  EXPECT_EQ(local_layers[1].get<std::string>(), "inflation_layer");
+  EXPECT_FALSE(nav_doc.at("costmap_global").contains("layers"));
+  ASSERT_TRUE(nav_doc.at("costmap_local").contains("obstacle_layer"));
+  ASSERT_TRUE(nav_doc.at("costmap_local").contains("inflation_layer"));
+  EXPECT_FALSE(nav_doc.at("costmap_local").contains("layers"));
 
   // Inflation policy lives in the inline layer sections (global 0.5/csf 3.0;
   // local 0.55/csf 3.0 -- deliberately larger than nav_demo's 0.2 baseline:
@@ -422,33 +435,22 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullModuleNames) {
     ayanami::Config cfg(p.is_absolute() ? entry : (directory + "/" + entry));
     return cfg.param<std::string>(section, "name", "");
   };
-  auto recovery_name_by_role = [](const std::string& role) {
-    // The ordered config_recovery list lives in the route file's
-    // navigation section.
-    ayanami::Config nav(route_path(k_costmap_route));
-    std::vector<std::string> entries;
-    try {
-      entries = nav.param<std::vector<std::string>>(
-          "navigation", "config_recovery", {});
-    } catch (const std::exception&) {
-      const std::string single =
-          nav.param<std::string>("navigation", "config_recovery", "");
-      if (!single.empty()) {
-        entries.push_back(single);
-      }
-    }
-    const std::string directory =
-        ayanami::GlobalConfig::instance()->param<std::string>(
-            "global", "config_path", ".");
-    for (const auto& entry : entries) {
-      const std::filesystem::path p(entry);
-      ayanami::Config cfg(p.is_absolute() ? entry : (directory + "/" + entry));
-      if (cfg.param<std::string>("recovery", "role", "") == role) {
-        return cfg.param<std::string>("recovery", "name", "");
-      }
-    }
-    return std::string("");
-  };
+  // The recovery list is an ordered plain list; the test phase ships the
+  // placeholder only (it runs the full start/tick/finish protocol and takes
+  // no action).
+  ayanami::Config nav(route_path(k_costmap_route));
+  const auto recovery_entries = nav.param<std::vector<std::string>>(
+      "navigation", "config_recovery", {});
+  ASSERT_FALSE(recovery_entries.empty());
+  const std::string directory =
+      ayanami::GlobalConfig::instance()->param<std::string>(
+          "global", "config_path", ".");
+  const std::filesystem::path rp(recovery_entries.front());
+  ayanami::Config recovery_cfg(rp.is_absolute() ? recovery_entries.front()
+                                                : (directory + "/" +
+                                                   recovery_entries.front()));
+  EXPECT_EQ(recovery_cfg.param<std::string>("recovery", "name", ""),
+            "abstract_nothing_recovery");
 
   EXPECT_EQ(component_name("config_planner", "planner"),
             "costmap_astar_planner");
@@ -456,11 +458,6 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullModuleNames) {
             "costmap_minsnap_smoother");
   EXPECT_EQ(component_name("config_controller", "controller"),
             "costmap_pid_controller");
-  EXPECT_EQ(recovery_name_by_role("spin"), "costmap_spin_recovery");
-  EXPECT_EQ(recovery_name_by_role("wait"), "costmap_wait_recovery");
-  EXPECT_EQ(recovery_name_by_role("backup"), "costmap_back_up_recovery");
-  EXPECT_EQ(recovery_name_by_role("clear_costmap"),
-            "costmap_cleanup_recovery");
 }
 
 TEST(ConfigSpecVerify, staticMapLoadsAndNavDemoCompat) {
