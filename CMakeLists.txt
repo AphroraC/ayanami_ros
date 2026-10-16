@@ -19,6 +19,7 @@ endif()
 find_package(catkin REQUIRED COMPONENTS
   roscpp roslib tf2 tf2_eigen tf2_geometry_msgs tf2_ros
   nav_msgs sensor_msgs geometry_msgs std_msgs pcl_conversions
+  actionlib mbf_msgs nodelet pluginlib
   rm_msgs
 )
 
@@ -37,8 +38,8 @@ include_directories(include ${catkin_INCLUDE_DIRS})
 
 catkin_package(
   INCLUDE_DIRS include
-  LIBRARIES ayanami_ros
-  CATKIN_DEPENDS roscpp roslib tf2 tf2_eigen tf2_geometry_msgs tf2_ros nav_msgs sensor_msgs geometry_msgs std_msgs pcl_conversions rm_msgs
+  LIBRARIES ayanami_ros ayanami_nodelet
+  CATKIN_DEPENDS roscpp roslib tf2 tf2_eigen tf2_geometry_msgs tf2_ros nav_msgs sensor_msgs geometry_msgs std_msgs pcl_conversions actionlib mbf_msgs rm_msgs
 )
 
 add_library(ayanami_ros
@@ -55,6 +56,13 @@ target_link_libraries(ayanami_ros PUBLIC
 
 add_executable(ayanami_rosnode apps/ayanami_rosnode.cpp)
 target_link_libraries(ayanami_rosnode ayanami_ros)
+
+# nodelet wrapper (asuka mode): same AyanamiROS boundary, loaded via
+# nodelet_plugins.xml (ayanami/AyanamiNodelet) into a shared manager such as
+# nav_bringup's "evangelion" -- the /nagisa/obstacle input then stays
+# intra-process.
+add_library(ayanami_nodelet SHARED apps/ayanami_nodelet.cpp)
+target_link_libraries(ayanami_nodelet ayanami_ros ${catkin_LIBRARIES})
 
 # Task 9: rviz_viewer ROS extension .so (spec §4.5 core->ROS). Exports the
 # create_extension_module factory symbol for AyanamiROS to dlopen;
@@ -88,15 +96,29 @@ target_include_directories(cmd_chassis_publisher PRIVATE
 target_link_libraries(cmd_chassis_publisher PRIVATE ayanami_ros ayanami::ayanami ${catkin_LIBRARIES})
 set_target_properties(cmd_chassis_publisher PROPERTIES PREFIX "libayanami_")
 
+# mbf_action_server: MBF compatibility layer for the behavior tree's
+# SimpleActionClient<mbf_msgs::MoveBaseAction>("/move_base_flex/move_base").
+# Goals go through NavigationInputs::on_goal_request (AyanamiROS forwards
+# them into the goal mailbox); NavigationCallbacks::on_navigation_result
+# completes the action. Loaded via
+# config_extensions.json::extensions.loading_extension_modules.
+add_library(mbf_action_server SHARED
+  modules/mbf_action_server/mbf_action_server.cpp)
+target_include_directories(mbf_action_server PRIVATE
+  ${PROJECT_SOURCE_DIR}/modules)
+target_link_libraries(mbf_action_server PRIVATE ayanami_ros ayanami::ayanami ${catkin_LIBRARIES})
+set_target_properties(mbf_action_server PROPERTIES PREFIX "libayanami_")
+
 # fast_tf in-process, recording encoded-value change events; dynamically loaded
 # via extension_modules by scripts/tf_sync_stress_test.sh, not part of the
 # production extension_modules default list).
 
-install(TARGETS ayanami_ros ayanami_rosnode rviz_viewer cmd_chassis_publisher
+install(TARGETS ayanami_ros ayanami_rosnode ayanami_nodelet rviz_viewer cmd_chassis_publisher mbf_action_server
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY include/ DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
 install(DIRECTORY launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(FILES nodelet_plugins.xml DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 
 if(CATKIN_ENABLE_TESTING)
   find_package(GTest REQUIRED)

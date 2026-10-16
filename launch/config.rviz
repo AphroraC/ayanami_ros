@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /PointCloud21
       Splitter Ratio: 0.5029411911964417
     Tree Height: 972
   - Class: rviz/Selection
@@ -25,7 +26,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: LaserScan
+    SyncSource: PointCloud2
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -63,11 +64,11 @@ Visualization Manager:
       Value: true
     - Alpha: 0.699999988079071
       Class: rviz/Map
-      Color Scheme: costmap
+      Color Scheme: map
       Draw Behind: false
       Enabled: true
       Name: Global Costmap
-      Topic: /ayanami/global_costmap/inflation
+      Topic: /move_base_flex/global_costmap/costmap
       Unreliable: false
       Use Timestamp: false
       Value: true
@@ -84,7 +85,7 @@ Visualization Manager:
     - Alpha: 1
       Buffer Length: 1
       Class: rviz/Path
-      Color: 255; 170; 0
+      Color: 255; 0; 0
       Enabled: true
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
@@ -102,7 +103,7 @@ Visualization Manager:
       Radius: 0.029999999329447746
       Shaft Diameter: 0.10000000149011612
       Shaft Length: 0.10000000149011612
-      Topic: /ayanami/planner/path
+      Topic: /move_base_flex/GlobalPlanner/plan
       Unreliable: false
       Value: true
     - Alpha: 1
@@ -204,9 +205,9 @@ Visualization Manager:
         All Enabled: true
         base_link:
           Value: true
-        camera_init:
+        body:
           Value: true
-        laser:
+        camera_init:
           Value: true
         left_back_pivot:
           Value: true
@@ -215,6 +216,8 @@ Visualization Manager:
         left_front_pivot:
           Value: true
         left_front_wheel:
+          Value: true
+        livox_frame:
           Value: true
         map:
           Value: true
@@ -228,6 +231,8 @@ Visualization Manager:
           Value: true
         right_front_wheel:
           Value: true
+        yaw:
+          Value: true
       Marker Alpha: 1
       Marker Scale: 1
       Name: TF
@@ -237,52 +242,27 @@ Visualization Manager:
       Tree:
         map:
           camera_init:
-            {}
+            body:
+              {}
           odom:
             base_link:
-              laser:
-                {}
               left_back_pivot:
                 left_back_wheel:
                   {}
               left_front_pivot:
                 left_front_wheel:
                   {}
+              livox_frame:
+                {}
               right_back_pivot:
                 right_back_wheel:
                   {}
               right_front_pivot:
                 right_front_wheel:
                   {}
+              yaw:
+                {}
       Update Interval: 0
-      Value: true
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz/LaserScan
-      Color: 255; 255; 255
-      Color Transformer: Intensity
-      Decay Time: 0
-      Enabled: true
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Min Color: 0; 0; 0
-      Name: LaserScan
-      Position Transformer: XYZ
-      Queue Size: 10
-      Selectable: true
-      Size (Pixels): 8
-      Size (m): 0.10000000149011612
-      Style: Boxes
-      Topic: /scan
-      Unreliable: false
-      Use Fixed Frame: true
-      Use rainbow: true
       Value: true
     - Alpha: 1
       Class: rviz/RobotModel
@@ -299,11 +279,6 @@ Visualization Manager:
           Show Axes: false
           Show Trail: false
           Value: true
-        laser:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
         left_back_pivot:
           Alpha: 1
           Show Axes: false
@@ -324,6 +299,10 @@ Visualization Manager:
           Show Axes: false
           Show Trail: false
           Value: true
+        livox_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
         right_back_pivot:
           Alpha: 1
           Show Axes: false
@@ -350,6 +329,34 @@ Visualization Manager:
       Update Interval: 0
       Value: true
       Visual Enabled: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 0
+        Min Value: 0
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.10000000149011612
+      Style: Boxes
+      Topic: /ayanami/esdf/field
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -378,7 +385,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 7.9573493003845215
+      Distance: 16.355728149414062
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -394,9 +401,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9497960209846497
+      Pitch: 1.2797966003417969
       Target Frame: <Fixed Frame>
-      Yaw: 4.778580665588379
+      Yaw: 4.6585798263549805
     Saved: ~
 Window Geometry:
   Displays:
@@ -414,5 +421,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1859
-  X: 60
-  Y: 48
+  X: 500
+  Y: 316

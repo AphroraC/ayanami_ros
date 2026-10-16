@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<library path="libayanami_nodelet">
+  <class name="ayanami/AyanamiNodelet" type="ayanami_ros::AyanamiNodelet" base_class_type="nodelet::Nodelet">
+    <description>Ayanami Nodelet</description>
+  </class>
+</library>

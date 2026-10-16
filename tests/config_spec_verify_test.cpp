@@ -214,8 +214,10 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
   ayanami::Config cfg(
       ayanami::GlobalConfig::getConfigPath("config_extensions"));
   const std::string sec = "rviz_viewer";
+  // planner_path_topic carries the BT compatibility name (perception_layer.h
+  // GLOBAL_PLANNER_DATA consumes /move_base_flex/GlobalPlanner/plan).
   EXPECT_EQ(cfg.param<std::string>(sec, "planner_path_topic", ""),
-            "/ayanami/planner/path");
+            "/move_base_flex/GlobalPlanner/plan");
   EXPECT_EQ(cfg.param<std::string>(sec, "smoother_path_topic", ""),
             "/ayanami/smoother/path");
   // The smoother input path and the controller follow path are no longer
@@ -255,10 +257,15 @@ TEST(ConfigSpecVerify, rvizViewerTopicsLiveInConfigExtensions) {
   // long-term and republished at ITS OWN rate (the global layers are
   // static -- 0.1 Hz default; the local layers follow the robot).
   const std::string cv_sec = "rose_viewer";
+  // global_static_topic carries the BT compatibility name: service_processor's
+  // global_costmap static layer consumes /map (map_server-equivalent, latched).
   EXPECT_EQ(cfg.param<std::string>(cv_sec, "global_static_topic", ""),
-            "/ayanami/global_costmap/static");
+            "/map");
+  // global_inflation_topic carries the BT compatibility name
+  // (service_processor local_costmap map_topic consumes
+  // /move_base_flex/global_costmap/costmap).
   EXPECT_EQ(cfg.param<std::string>(cv_sec, "global_inflation_topic", ""),
-            "/ayanami/global_costmap/inflation");
+            "/move_base_flex/global_costmap/costmap");
   EXPECT_EQ(cfg.param<std::string>(cv_sec, "local_obstacle_topic", ""),
             "/ayanami/local_costmap/obstacle");
   EXPECT_EQ(cfg.param<std::string>(cv_sec, "local_inflation_topic", ""),
@@ -435,29 +442,34 @@ TEST(ConfigSpecVerify, navigationIdsKeepFullModuleNames) {
     ayanami::Config cfg(p.is_absolute() ? entry : (directory + "/" + entry));
     return cfg.param<std::string>(section, "name", "");
   };
-  // The recovery list is an ordered plain list; the test phase ships the
-  // placeholder only (it runs the full start/tick/finish protocol and takes
-  // no action).
+  // The recovery list is an ordered plain list in the nav2 default-tree
+  // rotation order: clear -> spin -> wait -> backup (the FSM cursor
+  // advances one entry per failure).
   ayanami::Config nav(route_path(k_costmap_route));
   const auto recovery_entries = nav.param<std::vector<std::string>>(
       "navigation", "config_recovery", {});
-  ASSERT_FALSE(recovery_entries.empty());
+  const std::vector<std::string> expected_recoveries = {
+      "costmap_cleanup_recovery", "costmap_spin_recovery",
+      "costmap_wait_recovery", "costmap_back_up_recovery"};
+  ASSERT_EQ(recovery_entries.size(), expected_recoveries.size());
   const std::string directory =
       ayanami::GlobalConfig::instance()->param<std::string>(
           "global", "config_path", ".");
-  const std::filesystem::path rp(recovery_entries.front());
-  ayanami::Config recovery_cfg(rp.is_absolute() ? recovery_entries.front()
-                                                : (directory + "/" +
-                                                   recovery_entries.front()));
-  EXPECT_EQ(recovery_cfg.param<std::string>("recovery", "name", ""),
-            "abstract_nothing_recovery");
+  for (std::size_t i = 0; i < expected_recoveries.size(); ++i) {
+    const std::filesystem::path rp(recovery_entries[i]);
+    ayanami::Config recovery_cfg(rp.is_absolute() ? recovery_entries[i]
+                                                  : (directory + "/" +
+                                                     recovery_entries[i]));
+    EXPECT_EQ(recovery_cfg.param<std::string>("recovery", "name", ""),
+              expected_recoveries[i]);
+  }
 
   EXPECT_EQ(component_name("config_planner", "planner"),
             "costmap_astar_planner");
   EXPECT_EQ(component_name("config_smoother", "smoother"),
             "costmap_minsnap_smoother");
   EXPECT_EQ(component_name("config_controller", "controller"),
-            "costmap_pid_controller");
+            "costmap_mppi_controller");
 }
 
 TEST(ConfigSpecVerify, staticMapLoadsAndNavDemoCompat) {

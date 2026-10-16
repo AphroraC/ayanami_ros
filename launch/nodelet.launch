@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="nodelet_manager" default="nodelet_manager" />
+  <!-- The manager is expected to be started elsewhere (nav_bringup/asuka.launch
+       starts "evangelion"): loading into a shared manager keeps the
+       /nagisa/obstacle input intra-process with the perception nodelets.
+       Starting a second, private manager here would forfeit that. -->
+  <!-- <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" output="screen"/> -->
+  <node pkg="nodelet" type="nodelet" name="ayanami" args="load ayanami/AyanamiNodelet $(arg nodelet_manager)" output="screen">
+    <param name="config_path" value="$(find ayanami)/config"/>
+  </node>
+</launch>

@@ -5,8 +5,10 @@
 #include <stdexcept>
 
 #include <ros/package.h>
+#include <ros/callback_queue.h>
 #include <tf2_eigen/tf2_eigen.h>
 
+#include <ayanami/interfaces/callbacks.hpp>
 #include <ayanami/utility/load_module.hpp>
 #include <ayanami/utility/logging.hpp>
 
@@ -85,6 +87,16 @@ AyanamiROS::AyanamiROS(ros::NodeHandle& nh)
   // buffer (interpolation, static edges, stamp-time lookups included).
   installTfSource();
 
+  // Input-slot bridge (must precede loadExtensionModules so no extension
+  // emission can ever race an unbound slot): extensions (mbf_action_server)
+  // emit NavigationInputs::on_goal_request; the hop into the latest-wins goal
+  // mailbox stays owned by AyanamiROS, exactly like the ROS goal topic.
+  cb_goal_request =
+      ayanami::interfaces::NavigationInputs::on_goal_request.subscribe(
+          [this](const ayanami::geometry_msgs::PoseStamped& goal) {
+            submitGoal(goal);
+          });
+
   // Order-critical: extensions must register their NavigationCallbacks
   // subscriptions before navigation_module->start, otherwise the first wave of
   // startup visualization emits is missed.
@@ -113,6 +125,10 @@ void AyanamiROS::start() {
 }
 
 void AyanamiROS::stop() {
+  // Unbind the extension goal input first: after this no extension emission
+  // can reach submitGoal, so the mailbox is frozen before the loop thread and
+  // the navigation module wind down.
+  cb_goal_request.reset();
   kill_switch.store(true);
   if (loop_thread.joinable()) {
     loop_thread.join();
@@ -401,7 +417,15 @@ void AyanamiROS::loop() {
       navigation_module->spinOnce();
     }
     drainPendingGoal();  // latest-wins goal mailbox: dispatches at most the current latest one per round
-    ros::spinOnce();
+    // Spin only THIS handle's queue: the global queue for the standalone
+    // node (nh carries no custom queue there, so this equals ros::spinOnce),
+    // the nodelet's dedicated queue when embedded -- reaching for the
+    // process-global queue from this thread would steal the host manager's
+    // other-nodelet callbacks and wreck both sides' pacing. Both queues are
+    // ros::CallbackQueue instances, so the concrete cast always succeeds.
+    if (auto* queue = dynamic_cast<ros::CallbackQueue*>(nh.getCallbackQueue())) {
+      queue->callAvailable(ros::WallDuration(0));
+    }
     rate.sleep();
   }
   SPDLOG_LOGGER_INFO(ayanami::rosLogger(), "AyanamiROS loop exited");

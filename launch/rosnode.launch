@@ -1,0 +1,12 @@
+<launch>
+  <arg name="rviz" default="false"/>
+  <!-- Absolute source-tree path: roslaunch's $(find ayanami) can resolve to
+       a stale devel-space snapshot instead of the source tree. -->
+  <arg name="config_path" default="$(find ayanami)/config"/>
+  <node name="ayanami" pkg="ayanami_ros" type="ayanami_rosnode" output="screen">
+    <param name="config_path" value="$(arg config_path)"/>
+  </node>
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find ayanami_ros)/launch/config.rviz"/>
+  </group>
+</launch>

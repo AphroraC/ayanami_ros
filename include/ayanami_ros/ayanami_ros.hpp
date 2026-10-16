@@ -24,6 +24,7 @@
 #include <ayanami/messages/sensor_msgs.hpp>
 #include <ayanami/messages/timestamp.hpp>
 #include <ayanami/utility/config.hpp>
+#include <ayanami/utility/callback_slot.hpp>
 #include <ayanami/utility/extension_module.hpp>
 
 #include <ayanami_ros/tf2_listener.hpp>
@@ -119,6 +120,10 @@ private:
   ayanami_ros::TF2Listener tf_listener;
 
   ros::Subscriber goal_sub, pointcloud_sub, odom_sub, laserscan_sub;
+
+  // Extension goal input (NavigationInputs::on_goal_request -> submitGoal);
+  // reset at the top of stop() to freeze the mailbox before teardown.
+  ayanami::CallbackSubscription cb_goal_request;
 
   std::atomic<bool> kill_switch{false};
   std::thread loop_thread;
